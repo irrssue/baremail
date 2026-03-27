@@ -6,12 +6,12 @@ const { google } = require("googleapis");
 const app = express();
 const PORT = 3001;
 
-app.use(cors({ origin: "http://localhost:5173", credentials: true }));
+app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.CLIENT_ID,
   process.env.CLIENT_SECRET,
-  "http://localhost:3001/auth/google/callback"
+  process.env.REDIRECT_URI || "http://localhost:3001/auth/google/callback"
 );
 
 // In-memory token storage (single user)
@@ -35,7 +35,7 @@ app.get("/auth/google/callback", async (req, res) => {
     const { tokens: newTokens } = await oauth2Client.getToken(code);
     tokens = newTokens;
     oauth2Client.setCredentials(tokens);
-    res.redirect("http://localhost:5173");
+    res.redirect(process.env.CLIENT_URL || "http://localhost:5173");
   } catch (err) {
     console.error("OAuth error:", err.message);
     res.status(500).send("Authentication failed");
