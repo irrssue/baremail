@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react"
 
+const API = import.meta.env.VITE_API_URL || ""
+
 function App() {
   const [emails, setEmails] = useState([])
   const [selected, setSelected] = useState(null)
@@ -7,7 +9,7 @@ function App() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch("/auth/status")
+    fetch(`${API}/auth/status`)
       .then((r) => r.json())
       .then((data) => {
         setAuthenticated(data.authenticated)
@@ -19,7 +21,7 @@ function App() {
 
   function loadEmails() {
     setLoading(true)
-    fetch("/api/emails")
+    fetch(`${API}/api/emails`)
       .then((r) => r.json())
       .then((data) => {
         setEmails(data)
@@ -29,7 +31,7 @@ function App() {
   }
 
   function openEmail(email) {
-    fetch(`/api/emails/${email.id}`)
+    fetch(`${API}/api/emails/${email.id}`)
       .then((r) => r.json())
       .then((data) => setSelected(data))
   }
@@ -56,7 +58,7 @@ function App() {
           </div>
           <div className="py-8">
             <a
-              href="/auth/google"
+              href={`${API}/auth/google`}
               className="text-sm text-blue-600 hover:underline"
             >
               Sign in with Google
