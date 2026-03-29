@@ -1,14 +1,11 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const session = require("express-session");
+const crypto = require("crypto");
 const { google } = require("googleapis");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-// Trust Railway/Vercel reverse proxy so secure cookies work
-app.set("trust proxy", 1);
 
 app.use(
   cors({
@@ -17,19 +14,8 @@ app.use(
   })
 );
 
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "change-me-in-production",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    },
-  })
-);
+// In-memory token store: token -> oauth tokens
+const tokenStore = new Map();
 
 function makeOAuthClient() {
   return new google.auth.OAuth2(
@@ -57,11 +43,12 @@ app.get("/auth/google/callback", async (req, res) => {
   try {
     const oauth2Client = makeOAuthClient();
     const { tokens } = await oauth2Client.getToken(code);
-    req.session.tokens = tokens; // store per-session, not globally
-    req.session.save((err) => {
-      if (err) console.error("Session save error:", err);
-      res.redirect(process.env.CLIENT_URL || "http://localhost:5173");
-    });
+
+    const sessionToken = crypto.randomBytes(32).toString("hex");
+    tokenStore.set(sessionToken, tokens);
+
+    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    res.redirect(`${clientUrl}?token=${sessionToken}`);
   } catch (err) {
     console.error("OAuth error:", err.message);
     res.status(500).send("Authentication failed");
@@ -69,23 +56,25 @@ app.get("/auth/google/callback", async (req, res) => {
 });
 
 app.get("/auth/status", (req, res) => {
-  res.json({ authenticated: !!req.session.tokens });
+  const token = req.headers["x-session-token"];
+  res.json({ authenticated: !!(token && tokenStore.has(token)) });
 });
 
 app.get("/auth/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.json({ ok: true });
-  });
+  const token = req.headers["x-session-token"];
+  if (token) tokenStore.delete(token);
+  res.json({ ok: true });
 });
 
 // --- Middleware ---
 
 function requireAuth(req, res, next) {
-  if (!req.session.tokens) {
+  const token = req.headers["x-session-token"];
+  if (!token || !tokenStore.has(token)) {
     return res.status(401).json({ error: "Not authenticated" });
   }
   const oauth2Client = makeOAuthClient();
-  oauth2Client.setCredentials(req.session.tokens);
+  oauth2Client.setCredentials(tokenStore.get(token));
   req.oauth2Client = oauth2Client;
   next();
 }
@@ -119,13 +108,7 @@ app.get("/api/emails", requireAuth, async (req, res) => {
         const name = nameMatch ? nameMatch[1].trim() : from;
         const sender = nameMatch ? nameMatch[2] : from;
 
-        return {
-          id: msg.id,
-          name,
-          sender,
-          subject,
-          snippet: full.data.snippet,
-        };
+        return { id: msg.id, name, sender, subject, snippet: full.data.snippet };
       })
     );
 

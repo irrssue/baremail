@@ -2,6 +2,15 @@ import { useState, useEffect } from "react"
 
 const API = import.meta.env.VITE_API_URL || ""
 
+function getToken() {
+  return sessionStorage.getItem("bm_token")
+}
+
+function authHeaders() {
+  const token = getToken()
+  return token ? { "x-session-token": token } : {}
+}
+
 function App() {
   const [emails, setEmails] = useState([])
   const [selected, setSelected] = useState(null)
@@ -9,7 +18,15 @@ function App() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch(`${API}/auth/status`, { credentials: "include" })
+    // Pick up token from URL after OAuth redirect
+    const params = new URLSearchParams(window.location.search)
+    const urlToken = params.get("token")
+    if (urlToken) {
+      sessionStorage.setItem("bm_token", urlToken)
+      window.history.replaceState({}, "", window.location.pathname)
+    }
+
+    fetch(`${API}/auth/status`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => {
         setAuthenticated(data.authenticated)
@@ -21,17 +38,17 @@ function App() {
 
   function loadEmails() {
     setLoading(true)
-    fetch(`${API}/api/emails`, { credentials: "include" })
+    fetch(`${API}/api/emails`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => {
-        setEmails(data)
+        setEmails(Array.isArray(data) ? data : [])
         setLoading(false)
       })
       .catch(() => setLoading(false))
   }
 
   function openEmail(email) {
-    fetch(`${API}/api/emails/${email.id}`, { credentials: "include" })
+    fetch(`${API}/api/emails/${email.id}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => setSelected(data))
   }
@@ -80,13 +97,14 @@ function App() {
             baremail
           </h1>
           <button
-            onClick={() =>
-              fetch(`${API}/auth/logout`, { credentials: "include" }).then(() => {
+            onClick={() => {
+              fetch(`${API}/auth/logout`, { headers: authHeaders() }).then(() => {
+                sessionStorage.removeItem("bm_token")
                 setAuthenticated(false)
                 setEmails([])
                 setSelected(null)
               })
-            }
+            }}
             className="text-xs text-gray-400 hover:text-gray-700"
           >
             sign out
