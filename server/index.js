@@ -1,25 +1,48 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const session = require("express-session");
 const { google } = require("googleapis");
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
-app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
+// Trust Railway/Vercel reverse proxy so secure cookies work
+app.set("trust proxy", 1);
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.CLIENT_ID,
-  process.env.CLIENT_SECRET,
-  process.env.REDIRECT_URI || "http://localhost:3001/auth/google/callback"
+app.use(
+  cors({
+    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    credentials: true,
+  })
 );
 
-// In-memory token storage (single user)
-let tokens = null;
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "change-me-in-production",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    },
+  })
+);
+
+function makeOAuthClient() {
+  return new google.auth.OAuth2(
+    process.env.CLIENT_ID,
+    process.env.CLIENT_SECRET,
+    process.env.REDIRECT_URI || "http://localhost:3001/auth/google/callback"
+  );
+}
 
 // --- Auth Routes ---
 
 app.get("/auth/google", (req, res) => {
+  const oauth2Client = makeOAuthClient();
   const url = oauth2Client.generateAuthUrl({
     access_type: "offline",
     scope: ["https://www.googleapis.com/auth/gmail.readonly"],
@@ -32,9 +55,9 @@ app.get("/auth/google/callback", async (req, res) => {
   if (!code) return res.status(400).send("Missing auth code");
 
   try {
-    const { tokens: newTokens } = await oauth2Client.getToken(code);
-    tokens = newTokens;
-    oauth2Client.setCredentials(tokens);
+    const oauth2Client = makeOAuthClient();
+    const { tokens } = await oauth2Client.getToken(code);
+    req.session.tokens = tokens; // store per-session, not globally
     res.redirect(process.env.CLIENT_URL || "http://localhost:5173");
   } catch (err) {
     console.error("OAuth error:", err.message);
@@ -43,20 +66,32 @@ app.get("/auth/google/callback", async (req, res) => {
 });
 
 app.get("/auth/status", (req, res) => {
-  res.json({ authenticated: !!tokens });
+  res.json({ authenticated: !!req.session.tokens });
 });
 
-// --- Email Routes ---
+app.get("/auth/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.json({ ok: true });
+  });
+});
+
+// --- Middleware ---
 
 function requireAuth(req, res, next) {
-  if (!tokens) return res.status(401).json({ error: "Not authenticated" });
-  oauth2Client.setCredentials(tokens);
+  if (!req.session.tokens) {
+    return res.status(401).json({ error: "Not authenticated" });
+  }
+  const oauth2Client = makeOAuthClient();
+  oauth2Client.setCredentials(req.session.tokens);
+  req.oauth2Client = oauth2Client;
   next();
 }
 
+// --- Email Routes ---
+
 app.get("/api/emails", requireAuth, async (req, res) => {
   try {
-    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+    const gmail = google.gmail({ version: "v1", auth: req.oauth2Client });
     const list = await gmail.users.messages.list({
       userId: "me",
       maxResults: 20,
@@ -77,7 +112,6 @@ app.get("/api/emails", requireAuth, async (req, res) => {
         const from = headers.find((h) => h.name === "From")?.value || "";
         const subject = headers.find((h) => h.name === "Subject")?.value || "";
 
-        // Parse "Name <email>" format
         const nameMatch = from.match(/^"?([^"<]*)"?\s*<(.+)>$/);
         const name = nameMatch ? nameMatch[1].trim() : from;
         const sender = nameMatch ? nameMatch[2] : from;
@@ -101,7 +135,7 @@ app.get("/api/emails", requireAuth, async (req, res) => {
 
 app.get("/api/emails/:id", requireAuth, async (req, res) => {
   try {
-    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+    const gmail = google.gmail({ version: "v1", auth: req.oauth2Client });
     const msg = await gmail.users.messages.get({
       userId: "me",
       id: req.params.id,
@@ -113,7 +147,6 @@ app.get("/api/emails/:id", requireAuth, async (req, res) => {
     const subject = headers.find((h) => h.name === "Subject")?.value || "";
     const to = headers.find((h) => h.name === "To")?.value || "";
 
-    // Extract plain text body
     let body = "";
     const payload = msg.data.payload;
 
