@@ -58,7 +58,10 @@ app.get("/auth/google/callback", async (req, res) => {
     const oauth2Client = makeOAuthClient();
     const { tokens } = await oauth2Client.getToken(code);
     req.session.tokens = tokens; // store per-session, not globally
-    res.redirect(process.env.CLIENT_URL || "http://localhost:5173");
+    req.session.save((err) => {
+      if (err) console.error("Session save error:", err);
+      res.redirect(process.env.CLIENT_URL || "http://localhost:5173");
+    });
   } catch (err) {
     console.error("OAuth error:", err.message);
     res.status(500).send("Authentication failed");
