@@ -6,6 +6,52 @@ function getToken() {
   return sessionStorage.getItem("bm_token")
 }
 
+// Bucket an email timestamp the way twobird.com does: Today, Yesterday,
+// This Week, Last Week, then month names for anything older.
+function bucketOf(ts, now = new Date()) {
+  if (!ts) return "Earlier"
+  const d = new Date(ts)
+  const startOfDay = (x) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const today = startOfDay(now)
+  const dayMs = 86400000
+  const dayStart = startOfDay(d)
+  const diffDays = Math.round((today - dayStart) / dayMs)
+
+  if (diffDays <= 0) return "Today"
+  if (diffDays === 1) return "Yesterday"
+
+  // Week starts Sunday. This week = since the most recent Sunday.
+  const thisWeekStart = today - now.getDay() * dayMs
+  const lastWeekStart = thisWeekStart - 7 * dayMs
+  if (dayStart >= thisWeekStart) return "This Week"
+  if (dayStart >= lastWeekStart) return "Last Week"
+
+  // Older → month label; include year if not the current year.
+  const sameYear = d.getFullYear() === now.getFullYear()
+  return d.toLocaleDateString(undefined, {
+    month: "long",
+    ...(sameYear ? {} : { year: "numeric" }),
+  })
+}
+
+// Group an ordered (newest-first) email list into [{ label, items }] sections,
+// preserving order and only emitting a separator when the bucket changes.
+function groupByDay(emails) {
+  const now = new Date()
+  const groups = []
+  let current = null
+  for (const email of emails) {
+    const label = bucketOf(email.ts, now)
+    if (!current || current.label !== label) {
+      current = { label, items: [] }
+      groups.push(current)
+    }
+    current.items.push(email)
+  }
+  return groups
+}
+
 function authHeaders() {
   const token = getToken()
   return token ? { "x-session-token": token } : {}
@@ -188,19 +234,26 @@ function App() {
         <div className="empty">Inbox empty.</div>
       ) : (
         <div className="maillist">
-          {emails.map((email) => (
-            <div
-              key={email.id}
-              className="mailrow"
-              onClick={() => openEmail(email)}
-            >
-              <span className="who">{email.name}</span>
-              <span className="subj">
-                {email.subject}
-                {email.snippet && <span className="snip">{email.snippet}</span>}
-              </span>
-              {email.date && <span className="when">{email.date}</span>}
-            </div>
+          {groupByDay(emails).map((group) => (
+            <section key={group.label} className="daygroup">
+              <div className="day-sep">{group.label}</div>
+              {group.items.map((email) => (
+                <div
+                  key={email.id}
+                  className="mailrow"
+                  onClick={() => openEmail(email)}
+                >
+                  <span className="who">{email.name}</span>
+                  <span className="subj">
+                    {email.subject}
+                    {email.snippet && (
+                      <span className="snip">{email.snippet}</span>
+                    )}
+                  </span>
+                  {email.date && <span className="when">{email.date}</span>}
+                </div>
+              ))}
+            </section>
           ))}
           {nextPageToken && (
             <div ref={sentinelRef} className="status">

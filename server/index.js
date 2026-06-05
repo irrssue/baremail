@@ -23,12 +23,24 @@ function relTime(dateHeader) {
   if (!dateHeader) return "";
   const then = new Date(dateHeader);
   if (isNaN(then)) return "";
-  const secs = Math.floor((Date.now() - then) / 1000);
-  if (secs < 60) return "now";
-  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
-  if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
-  if (secs < 604800) return `${Math.floor(secs / 86400)}d`;
+  // Today → clock time (11:42 AM); older → month/day (Jun 4).
+  const now = new Date();
+  const sameDay =
+    then.getFullYear() === now.getFullYear() &&
+    then.getMonth() === now.getMonth() &&
+    then.getDate() === now.getDate();
+  if (sameDay) {
+    return then.toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
   return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function tsOf(dateHeader) {
+  const t = new Date(dateHeader).getTime();
+  return isNaN(t) ? 0 : t;
 }
 
 function makeOAuthClient() {
@@ -124,7 +136,7 @@ app.get("/api/emails", requireAuth, async (req, res) => {
         const name = nameMatch ? nameMatch[1].trim() : from;
         const sender = nameMatch ? nameMatch[2] : from;
 
-        return { id: msg.id, name, sender, subject, snippet: full.data.snippet, date: relTime(dateHeader) };
+        return { id: msg.id, name, sender, subject, snippet: full.data.snippet, date: relTime(dateHeader), ts: tsOf(dateHeader) };
       })
     );
 
