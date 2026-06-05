@@ -11,6 +11,38 @@ function authHeaders() {
   return token ? { "x-session-token": token } : {}
 }
 
+function Shell({ children, onBrand, onSignOut }) {
+  return (
+    <>
+      <header className="topbar">
+        <button className="brand" onClick={onBrand}>
+          baremail
+        </button>
+        {onSignOut && (
+          <div className="right">
+            <button className="signout-btn" onClick={onSignOut}>
+              sign out
+            </button>
+          </div>
+        )}
+      </header>
+      <main className="page-main">{children}</main>
+      <footer className="site-footer">
+        <div className="site-footer-inner">
+          <span className="foot-brand">baremail</span>
+          <nav className="foot-links">
+            <a href="mailto:liam@irrssue.com">contact</a>
+            <span className="foot-dot">·</span>
+            <a href="https://github.com/irrssue" target="_blank" rel="noreferrer">
+              github
+            </a>
+          </nav>
+        </div>
+      </footer>
+    </>
+  )
+}
+
 function App() {
   const [emails, setEmails] = useState([])
   const [selected, setSelected] = useState(null)
@@ -53,92 +85,82 @@ function App() {
       .then((data) => setSelected(data))
   }
 
+  function signOut() {
+    fetch(`${API}/auth/logout`, { headers: authHeaders() }).then(() => {
+      sessionStorage.removeItem("bm_token")
+      setAuthenticated(false)
+      setEmails([])
+      setSelected(null)
+    })
+  }
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-white text-black">
-        <div className="mx-auto w-[48vw]">
-          <div className="border-b border-gray-200 py-3">
-            <h1 className="text-lg font-bold">baremail</h1>
-          </div>
-          <div className="py-8 text-gray-400">Loading...</div>
-        </div>
-      </div>
+      <Shell onBrand={() => setSelected(null)}>
+        <div className="status">Loading…</div>
+      </Shell>
     )
   }
 
   if (!authenticated) {
     return (
-      <div className="min-h-screen bg-white text-black">
-        <div className="mx-auto w-[48vw]">
-          <div className="border-b border-gray-200 py-3">
-            <h1 className="text-lg font-bold">baremail</h1>
-          </div>
-          <div className="py-8">
-            <a
-              href={`${API}/auth/google`}
-              className="text-sm text-blue-600 hover:underline"
-            >
-              Sign in with Google
-            </a>
-          </div>
+      <Shell onBrand={() => setSelected(null)}>
+        <div className="login">
+          <h2>baremail</h2>
+          <p>A bare, minimal reader for your inbox. Nothing more.</p>
+          <a className="login-btn" href={`${API}/auth/google`}>
+            Sign in with Google
+          </a>
         </div>
-      </div>
+      </Shell>
+    )
+  }
+
+  if (selected) {
+    return (
+      <Shell onBrand={() => setSelected(null)} onSignOut={signOut}>
+        <article className="reader">
+          <button className="crumb" onClick={() => setSelected(null)}>
+            ← inbox
+          </button>
+          <h1>{selected.subject || "(no subject)"}</h1>
+          <div className="head">
+            <div className="line">
+              <span className="label">From</span> <b>{selected.sender}</b>
+            </div>
+            <div className="line">
+              <span className="label">To</span> {selected.to}
+            </div>
+          </div>
+          <div className="body">{selected.body || selected.snippet}</div>
+        </article>
+      </Shell>
     )
   }
 
   return (
-    <div className="min-h-screen bg-white text-black">
-      <div className="mx-auto w-[48vw]">
-        <div className="border-b border-gray-200 py-3 flex items-center justify-between">
-          <h1
-            className="text-lg font-bold cursor-pointer"
-            onClick={() => setSelected(null)}
-          >
-            baremail
-          </h1>
-          <button
-            onClick={() => {
-              fetch(`${API}/auth/logout`, { headers: authHeaders() }).then(() => {
-                sessionStorage.removeItem("bm_token")
-                setAuthenticated(false)
-                setEmails([])
-                setSelected(null)
-              })
-            }}
-            className="text-xs text-gray-400 hover:text-gray-700"
-          >
-            sign out
-          </button>
+    <Shell onBrand={() => setSelected(null)} onSignOut={signOut}>
+      {emails.length === 0 ? (
+        <div className="empty">Inbox empty.</div>
+      ) : (
+        <div className="maillist">
+          {emails.map((email) => (
+            <div
+              key={email.id}
+              className="mailrow"
+              onClick={() => openEmail(email)}
+            >
+              <span className="who">{email.name}</span>
+              <span className="subj">
+                {email.subject}
+                {email.snippet && <span className="snip">{email.snippet}</span>}
+              </span>
+              {email.date && <span className="when">{email.date}</span>}
+            </div>
+          ))}
         </div>
-        {selected ? (
-          <div className="py-4">
-            <div className="text-sm cursor-pointer text-gray-500 mb-4" onClick={() => setSelected(null)}>
-              &larr; back
-            </div>
-            <div className="space-y-1">
-              <div><span className="text-gray-500">From:</span> {selected.sender}</div>
-              <div><span className="text-gray-500">Subject:</span> {selected.subject}</div>
-              <div><span className="text-gray-500">To:</span> {selected.to}</div>
-            </div>
-            <hr className="my-4 border-gray-200" />
-            <div className="whitespace-pre-line">{selected.body || selected.snippet}</div>
-          </div>
-        ) : (
-          <div>
-            {emails.map((email) => (
-              <div
-                key={email.id}
-                onClick={() => openEmail(email)}
-                className="grid grid-cols-[200px_1fr] border-b border-gray-100 py-3 cursor-pointer hover:bg-gray-50"
-              >
-                <span className="font-medium truncate">{email.name}</span>
-                <span className="truncate text-gray-700">{email.subject}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+      )}
+    </Shell>
   )
 }
 

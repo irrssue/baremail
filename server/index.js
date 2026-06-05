@@ -18,6 +18,19 @@ app.use(
 // In-memory token store: token -> oauth tokens
 const tokenStore = new Map();
 
+// Format an email Date header into a short relative label (e.g. "3h", "2d").
+function relTime(dateHeader) {
+  if (!dateHeader) return "";
+  const then = new Date(dateHeader);
+  if (isNaN(then)) return "";
+  const secs = Math.floor((Date.now() - then) / 1000);
+  if (secs < 60) return "now";
+  if (secs < 3600) return `${Math.floor(secs / 60)}m`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
+  if (secs < 604800) return `${Math.floor(secs / 86400)}d`;
+  return then.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 function makeOAuthClient() {
   return new google.auth.OAuth2(
     process.env.CLIENT_ID,
@@ -98,18 +111,19 @@ app.get("/api/emails", requireAuth, async (req, res) => {
           userId: "me",
           id: msg.id,
           format: "metadata",
-          metadataHeaders: ["From", "Subject"],
+          metadataHeaders: ["From", "Subject", "Date"],
         });
 
         const headers = full.data.payload.headers;
         const from = headers.find((h) => h.name === "From")?.value || "";
         const subject = headers.find((h) => h.name === "Subject")?.value || "";
+        const dateHeader = headers.find((h) => h.name === "Date")?.value || "";
 
         const nameMatch = from.match(/^"?([^"<]*)"?\s*<(.+)>$/);
         const name = nameMatch ? nameMatch[1].trim() : from;
         const sender = nameMatch ? nameMatch[2] : from;
 
-        return { id: msg.id, name, sender, subject, snippet: full.data.snippet };
+        return { id: msg.id, name, sender, subject, snippet: full.data.snippet, date: relTime(dateHeader) };
       })
     );
 
