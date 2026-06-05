@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 
 const API = import.meta.env.VITE_API_URL || ""
 
@@ -48,6 +48,11 @@ function App() {
   const [selected, setSelected] = useState(null)
   const [authenticated, setAuthenticated] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [nextPageToken, setNextPageToken] = useState(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const sentinelRef = useRef(null)
+  const tokenRef = useRef(null)
+  const loadingMoreRef = useRef(false)
 
   useEffect(() => {
     // Pick up token from URL after OAuth redirect
@@ -73,11 +78,48 @@ function App() {
     fetch(`${API}/api/emails`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => {
-        setEmails(Array.isArray(data) ? data : [])
+        setEmails(data.emails || [])
+        setNextPageToken(data.nextPageToken || null)
+        tokenRef.current = data.nextPageToken || null
         setLoading(false)
       })
       .catch(() => setLoading(false))
   }
+
+  const loadMore = useCallback(() => {
+    const token = tokenRef.current
+    if (!token || loadingMoreRef.current) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    fetch(`${API}/api/emails?pageToken=${encodeURIComponent(token)}`, {
+      headers: authHeaders(),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        setEmails((prev) => [...prev, ...(data.emails || [])])
+        setNextPageToken(data.nextPageToken || null)
+        tokenRef.current = data.nextPageToken || null
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      })
+      .catch(() => {
+        loadingMoreRef.current = false
+        setLoadingMore(false)
+      })
+  }, [])
+
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) loadMore()
+      },
+      { rootMargin: "400px" }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [loadMore, emails.length, nextPageToken])
 
   function openEmail(email) {
     fetch(`${API}/api/emails/${email.id}`, { headers: authHeaders() })
@@ -91,6 +133,8 @@ function App() {
       setAuthenticated(false)
       setEmails([])
       setSelected(null)
+      setNextPageToken(null)
+      tokenRef.current = null
     })
   }
 
@@ -158,6 +202,11 @@ function App() {
               {email.date && <span className="when">{email.date}</span>}
             </div>
           ))}
+          {nextPageToken && (
+            <div ref={sentinelRef} className="status">
+              {loadingMore ? "Loading more…" : ""}
+            </div>
+          )}
         </div>
       )}
     </Shell>

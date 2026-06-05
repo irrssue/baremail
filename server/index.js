@@ -101,9 +101,10 @@ app.get("/api/emails", requireAuth, async (req, res) => {
     const list = await gmail.users.messages.list({
       userId: "me",
       maxResults: 20,
+      pageToken: req.query.pageToken || undefined,
     });
 
-    if (!list.data.messages) return res.json([]);
+    if (!list.data.messages) return res.json({ emails: [], nextPageToken: null });
 
     const emails = await Promise.all(
       list.data.messages.map(async (msg) => {
@@ -127,7 +128,7 @@ app.get("/api/emails", requireAuth, async (req, res) => {
       })
     );
 
-    res.json(emails);
+    res.json({ emails, nextPageToken: list.data.nextPageToken || null });
   } catch (err) {
     console.error("Fetch emails error:", err.message);
     res.status(500).json({ error: "Failed to fetch emails" });
