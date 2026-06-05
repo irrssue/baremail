@@ -44,6 +44,24 @@ cd baremail-app && npm run dev  # :5173 (Vite, proxies /api + /auth to :3001)
 cd baremail-app && npm run build
 ```
 
+## Deploy
+
+Self-hosted on the homelab — **not Vercel**. Routing:
+
+```
+mail.irrssue.com → cloudflare tunnel → homelab localhost:3003
+  → pm2 process "baremail" → server/index.js, STATIC_DIR=~/baremail/dist
+```
+
+The homelab (`ssh irrssue@homelab`, dir `~/baremail`) is **not a git checkout**
+and has no auto-pull. After any frontend or server change, deploy with:
+
+```
+./deploy.sh   # build → rsync dist + scp server/index.js → pm2 restart → verify
+```
+
+A 502 during the pm2 restart is normal (tunnel reconnect); the script retries.
+
 ## Contact
 Any public-facing contact email (footer, privacy, docs) must be `liam@irrssue.com`.
 
