@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+const path = require("path");
 const { google } = require("googleapis");
 
 const app = express();
@@ -154,6 +155,17 @@ app.get("/api/emails/:id", requireAuth, async (req, res) => {
     console.error("Fetch email error:", err.message);
     res.status(500).json({ error: "Failed to fetch email" });
   }
+});
+
+// --- Static frontend (single-origin deploy) ---
+// Serve the built React app. STATIC_DIR defaults to ../baremail-app/dist.
+const STATIC_DIR =
+  process.env.STATIC_DIR || path.join(__dirname, "..", "baremail-app", "dist");
+app.use(express.static(STATIC_DIR));
+
+// SPA fallback: any non-API GET serves index.html
+app.get(/^(?!\/(api|auth)\/).*/, (req, res) => {
+  res.sendFile(path.join(STATIC_DIR, "index.html"));
 });
 
 app.listen(PORT, () => {
