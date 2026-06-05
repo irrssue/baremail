@@ -161,23 +161,29 @@ app.get("/api/emails/:id", requireAuth, async (req, res) => {
     const subject = headers.find((h) => h.name === "Subject")?.value || "";
     const to = headers.find((h) => h.name === "To")?.value || "";
 
+    // Walk the MIME tree and collect the first text/plain and text/html bodies.
+    // GitHub-style notifications carry the rich "graphic" card in text/html,
+    // so we surface that when present and keep plain text as a fallback.
+    const decode = (d) => Buffer.from(d, "base64").toString("utf-8");
     let body = "";
-    const payload = msg.data.payload;
-
-    if (payload.parts) {
-      const textPart = payload.parts.find((p) => p.mimeType === "text/plain");
-      if (textPart && textPart.body.data) {
-        body = Buffer.from(textPart.body.data, "base64").toString("utf-8");
+    let bodyHtml = "";
+    const walk = (part) => {
+      if (!part) return;
+      const mime = part.mimeType || "";
+      if (mime === "text/plain" && !body && part.body?.data) {
+        body = decode(part.body.data);
+      } else if (mime === "text/html" && !bodyHtml && part.body?.data) {
+        bodyHtml = decode(part.body.data);
       }
-    } else if (payload.body && payload.body.data) {
-      body = Buffer.from(payload.body.data, "base64").toString("utf-8");
-    }
+      if (part.parts) part.parts.forEach(walk);
+    };
+    walk(msg.data.payload);
 
     const nameMatch = from.match(/^"?([^"<]*)"?\s*<(.+)>$/);
     const name = nameMatch ? nameMatch[1].trim() : from;
     const sender = nameMatch ? nameMatch[2] : from;
 
-    res.json({ id: msg.data.id, name, sender, subject, to, body, snippet: msg.data.snippet });
+    res.json({ id: msg.data.id, name, sender, subject, to, body, bodyHtml, snippet: msg.data.snippet });
   } catch (err) {
     console.error("Fetch email error:", err.message);
     res.status(500).json({ error: "Failed to fetch email" });

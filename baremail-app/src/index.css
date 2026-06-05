@@ -301,6 +301,17 @@ main.page-main {
 }
 .reader .body a:hover { text-decoration-color: var(--ink); }
 
+/* Rich HTML email body: rendered in a sandboxed iframe so the sender's own
+   layout/graphics show as designed. Rounded card, no border chrome. */
+.reader .body-html {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  margin-top: 4px;
+}
+
 /* === Footer ============================================================== */
 .site-footer {
   flex-shrink: 0;

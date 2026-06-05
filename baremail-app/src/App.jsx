@@ -57,6 +57,56 @@ function authHeaders() {
   return token ? { "x-session-token": token } : {}
 }
 
+// Render an email's text/html body in a sandboxed iframe so the email's own
+// CSS (background colors, layout, the "graphic" card) shows exactly as the
+// sender designed it, without leaking into baremail's own dark design system.
+// The iframe is sized to its content and re-measures on load + image loads.
+function HtmlBody({ html }) {
+  const ref = useRef(null)
+  const [height, setHeight] = useState(240)
+
+  // Self-sizing wrapper: report scrollHeight up via postMessage. We force
+  // links to open in a new tab and break long words so nothing overflows.
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
+<base target="_blank">
+<style>
+  html,body{margin:0;padding:0;background:#fff;color:#1a1a1a;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  body{padding:24px;overflow-x:hidden;word-break:break-word;}
+  img{max-width:100%;height:auto;}
+  a{word-break:break-all;}
+</style></head>
+<body>${html}
+<script>
+  function report(){parent.postMessage({__bmHeight:document.documentElement.scrollHeight},"*");}
+  window.addEventListener("load",report);
+  window.addEventListener("resize",report);
+  new ResizeObserver(report).observe(document.body);
+  report();
+<\/script>
+</body></html>`
+
+  useEffect(() => {
+    function onMsg(e) {
+      const h = e.data && e.data.__bmHeight
+      if (typeof h === "number" && h > 0) setHeight(h)
+    }
+    window.addEventListener("message", onMsg)
+    return () => window.removeEventListener("message", onMsg)
+  }, [])
+
+  return (
+    <iframe
+      ref={ref}
+      className="body-html"
+      title="email"
+      sandbox="allow-popups allow-popups-to-escape-sandbox"
+      srcDoc={srcDoc}
+      style={{ height }}
+    />
+  )
+}
+
 function Shell({ children, onBrand, onSignOut }) {
   return (
     <>
@@ -222,7 +272,11 @@ function App() {
               <span className="label">To</span> {selected.to}
             </div>
           </div>
-          <div className="body">{selected.body || selected.snippet}</div>
+          {selected.bodyHtml ? (
+            <HtmlBody html={selected.bodyHtml} />
+          ) : (
+            <div className="body">{selected.body || selected.snippet}</div>
+          )}
         </article>
       </Shell>
     )
