@@ -67,25 +67,58 @@ function HtmlBody({ html }) {
   const ref = useRef(null)
   const [height, setHeight] = useState(240)
 
-  // Self-sizing wrapper: report scrollHeight up via postMessage. We force
-  // links to open in a new tab and break long words so nothing overflows.
+  // Self-sizing wrapper. The email is forced onto baremail's dark surface like
+  // twobird: any white / near-white background the sender hardcoded (inline or
+  // via attribute) is stripped to transparent so the dark page shows through,
+  // and default text is lit. Logos and photos are left untouched. Height is
+  // reported up via postMessage so the parent sizes the iframe to exact content
+  // (no inner scroll). We must NOT clip overflow here — clipping collapses
+  // scrollHeight and the body gets cut off.
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
 <base target="_blank">
 <style>
   html,body{margin:0;padding:0;background:#1a1a1a;color:#f3f3f1;
     font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-  body{padding:0;overflow:hidden;word-break:break-word;
+  body{padding:0;overflow-x:hidden;word-break:break-word;
     -webkit-font-smoothing:antialiased;}
   img{max-width:100%;height:auto;}
-  a{color:#b89a6a;word-break:break-all;}
+  a{color:#b89a6a;}
 </style></head>
 <body>${html}
 <script>
-  function report(){parent.postMessage({__bmHeight:document.documentElement.scrollHeight},"*");}
-  window.addEventListener("load",report);
+  // A background counts as "white-ish" if all RGB channels are high. Strip it
+  // to transparent so the page's dark surface shows through.
+  function isLight(c){
+    if(!c) return false;
+    var m=c.match(/rgba?\\(([^)]+)\\)/); if(!m) return false;
+    var p=m[1].split(",").map(function(x){return parseFloat(x)});
+    if(p.length>=4 && p[3]===0) return false;            // already transparent
+    return p[0]>225 && p[1]>225 && p[2]>225;
+  }
+  function darken(){
+    var els=document.querySelectorAll("*");
+    for(var i=0;i<els.length;i++){
+      var el=els[i];
+      var cs=getComputedStyle(el);
+      if(isLight(cs.backgroundColor)) el.style.setProperty("background-color","transparent","important");
+      if(el.hasAttribute("bgcolor")){
+        var bg=el.getAttribute("bgcolor");
+        if(/^#?(f|e)/i.test(bg.replace("#",""))) el.style.setProperty("background-color","transparent","important");
+      }
+      // Lift dark text so it stays readable on the dark surface.
+      var t=cs.color && cs.color.match(/\\d+/g);
+      if(t && +t[0]<90 && +t[1]<90 && +t[2]<90)
+        el.style.setProperty("color","#e8e8e6","important");
+    }
+  }
+  function report(){parent.postMessage({__bmHeight:document.body.scrollHeight},"*");}
+  function pass(){darken();report();}
+  window.addEventListener("load",pass);
   window.addEventListener("resize",report);
   new ResizeObserver(report).observe(document.body);
-  report();
+  // Late images can change height; re-measure as each loads.
+  document.querySelectorAll("img").forEach(function(im){im.addEventListener("load",report)});
+  pass();
 <\/script>
 </body></html>`
 
