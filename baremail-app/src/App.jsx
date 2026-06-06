@@ -322,7 +322,154 @@ function Compose({ onClose, reply }) {
   )
 }
 
-function Shell({ children, onBrand, onCompose, search }) {
+// Derive up to two initials from a display name (or the email local-part as a
+// fallback) for the avatar shown before the photo loads or when no photo exists.
+function initialsOf(profile) {
+  const src = (profile?.name || profile?.email || "").trim()
+  if (!src) return "?"
+  const parts = src.split(/[\s@._-]+/).filter(Boolean)
+  if (parts.length === 0) return "?"
+  const first = parts[0][0] || ""
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : ""
+  return (first + last).toUpperCase()
+}
+
+// Settings view — reuses the reader shell (crumb, serif h1, mono head). baremail
+// is deliberately bare, so settings is just the connected Google account and a
+// sign-out control; the From/To-style head shows the signed-in identity.
+function Settings({ profile, onClose, onSignOut }) {
+  return (
+    <article className="reader settings">
+      <button className="crumb" onClick={onClose}>
+        ← inbox
+      </button>
+      <h1>Settings</h1>
+      <div className="head">
+        <div className="line">
+          <span className="label">Account</span>{" "}
+          <b>{profile?.name || "Signed in"}</b>
+        </div>
+        {profile?.email && (
+          <div className="line">
+            <span className="label">Email</span> {profile.email}
+          </div>
+        )}
+      </div>
+      <div className="settings-row">
+        <div className="settings-row-text">
+          <span className="settings-row-title">Sign out</span>
+          <span className="settings-row-sub">
+            End this session on baremail. You can sign back in with Google any time.
+          </span>
+        </div>
+        <button className="reply-btn" type="button" onClick={onSignOut}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          Sign out
+        </button>
+      </div>
+    </article>
+  )
+}
+
+// Topbar profile chip: a round Google avatar that opens a small dropdown with
+// the account identity, a Settings entry, and Sign out. The photo comes from
+// /api/profile; if it's missing (or 404s on a pre-userinfo-scope session) the
+// chip falls back to initials. Closes on outside-click, Escape, or blur.
+function Profile({ profile, onSettings, onSignOut }) {
+  const [open, setOpen] = useState(false)
+  const [imgOk, setImgOk] = useState(true)
+  const wrapRef = useRef(null)
+
+  // Outside-click + Escape close the menu.
+  useEffect(() => {
+    if (!open) return
+    function onDown(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    function onKey(e) {
+      if (e.key === "Escape") setOpen(false)
+    }
+    document.addEventListener("mousedown", onDown)
+    document.addEventListener("keydown", onKey)
+    return () => {
+      document.removeEventListener("mousedown", onDown)
+      document.removeEventListener("keydown", onKey)
+    }
+  }, [open])
+
+  const initials = initialsOf(profile)
+  const showImg = imgOk && profile?.picture
+
+  return (
+    <div className="profile" ref={wrapRef}>
+      <button
+        className="avatar"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="account menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={profile?.email || "account"}
+      >
+        {showImg ? (
+          <img
+            src={profile.picture}
+            alt=""
+            referrerPolicy="no-referrer"
+            onError={() => setImgOk(false)}
+          />
+        ) : (
+          <span className="avatar-initials">{initials}</span>
+        )}
+      </button>
+      {open && (
+        <div className="profile-menu" role="menu">
+          <div className="profile-id">
+            <span className="profile-name">{profile?.name || "Signed in"}</span>
+            {profile?.email && (
+              <span className="profile-email">{profile.email}</span>
+            )}
+          </div>
+          <div className="profile-sep" />
+          <button
+            className="menu-item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              onSettings?.()
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            Settings
+          </button>
+          <button
+            className="menu-item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              onSignOut?.()
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Shell({ children, onBrand, onCompose, search, profile, onSettings, onSignOut }) {
   return (
     <>
       <header className="topbar">
@@ -330,6 +477,13 @@ function Shell({ children, onBrand, onCompose, search }) {
           baremail
         </button>
         <div className="right">
+          {profile && (
+            <Profile
+              profile={profile}
+              onSettings={onSettings}
+              onSignOut={onSignOut}
+            />
+          )}
           {search && (
             <div className="search-box">
               <svg
@@ -419,6 +573,9 @@ function App() {
   const [composing, setComposing] = useState(false)
   // When set, the compose view opens as a threaded reply (prefilled To/Subject).
   const [replyCtx, setReplyCtx] = useState(null)
+  // Google account (name/email/photo) for the topbar profile chip + settings.
+  const [profile, setProfile] = useState(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
   const sentinelRef = useRef(null)
   const tokenRef = useRef(null)
@@ -445,6 +602,46 @@ function App() {
         if (!data.authenticated) setLoading(false)
       })
       .catch(() => setLoading(false))
+  }, [])
+
+  // Load the Google account profile (name/email/photo) once authenticated. A
+  // 403 means the session predates the userinfo scopes — leave profile null and
+  // the chip renders a neutral fallback; everything else still works.
+  useEffect(() => {
+    if (!authenticated) {
+      setProfile(null)
+      return
+    }
+    fetch(`${API}/api/profile`, { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data && setProfile(data))
+      .catch(() => {})
+  }, [authenticated])
+
+  // Sign out: drop the session server-side, clear the local token, and reset to
+  // the logged-out view. Mirrors the old logout button behavior.
+  const signOut = useCallback(() => {
+    fetch(`${API}/auth/logout`, { method: "POST", headers: authHeaders() }).finally(() => {
+      localStorage.removeItem("bm_token")
+      setAuthenticated(false)
+      setProfile(null)
+      setSelected(null)
+      setComposing(false)
+      setSettingsOpen(false)
+      setEmails([])
+    })
+  }, [])
+
+  const openSettings = useCallback(() => {
+    setSelected(null)
+    setComposing(false)
+    window.history.pushState({ bmSettings: true }, "")
+    setSettingsOpen(true)
+  }, [])
+
+  const closeSettings = useCallback(() => {
+    if (window.history.state?.bmSettings) window.history.back()
+    else setSettingsOpen(false)
   }, [])
 
   function loadEmails(q = "") {
@@ -520,6 +717,7 @@ function App() {
       setSelected(null)
       setComposing(false)
       setReplyCtx(null)
+      setSettingsOpen(false)
     }
     window.addEventListener("popstate", onPop)
     return () => window.removeEventListener("popstate", onPop)
@@ -650,9 +848,27 @@ function App() {
     )
   }
 
+  if (settingsOpen) {
+    return (
+      <Shell
+        onBrand={closeSettings}
+        profile={profile}
+        onSettings={openSettings}
+        onSignOut={signOut}
+      >
+        <Settings profile={profile} onClose={closeSettings} onSignOut={signOut} />
+      </Shell>
+    )
+  }
+
   if (composing) {
     return (
-      <Shell onBrand={closeCompose}>
+      <Shell
+        onBrand={closeCompose}
+        profile={profile}
+        onSettings={openSettings}
+        onSignOut={signOut}
+      >
         <Compose onClose={closeCompose} reply={replyCtx} />
       </Shell>
     )
@@ -660,7 +876,13 @@ function App() {
 
   if (selected) {
     return (
-      <Shell onBrand={closeReader} onCompose={openCompose}>
+      <Shell
+        onBrand={closeReader}
+        onCompose={openCompose}
+        profile={profile}
+        onSettings={openSettings}
+        onSignOut={signOut}
+      >
         <article className="reader">
           <button className="crumb" onClick={closeReader}>
             ← inbox
@@ -698,7 +920,14 @@ function App() {
   const flatIndex = new Map(emails.map((e, i) => [e.id, i]))
 
   return (
-    <Shell onBrand={() => setSelected(null)} onCompose={openCompose} search={searchProps}>
+    <Shell
+      onBrand={() => setSelected(null)}
+      onCompose={openCompose}
+      search={searchProps}
+      profile={profile}
+      onSettings={openSettings}
+      onSignOut={signOut}
+    >
       {emails.length === 0 ? (
         <div className="empty">
           {queryRef.current ? "No matches." : "Inbox empty."}

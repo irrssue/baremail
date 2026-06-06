@@ -52,8 +52,16 @@ func main() {
 			ClientID:     os.Getenv("CLIENT_ID"),
 			ClientSecret: os.Getenv("CLIENT_SECRET"),
 			RedirectURL:  env("REDIRECT_URI", "http://localhost:3001/auth/google/callback"),
-			Scopes:       []string{gmail.GmailReadonlyScope, gmail.GmailSendScope},
-			Endpoint:     google.Endpoint,
+			// userinfo.profile + .email back the avatar (name, email, photo) shown
+			// in the topbar profile menu. Sessions consented before these scopes
+			// existed get a 403 from /api/profile and fall back to an initials chip.
+			Scopes: []string{
+				gmail.GmailReadonlyScope,
+				gmail.GmailSendScope,
+				"https://www.googleapis.com/auth/userinfo.profile",
+				"https://www.googleapis.com/auth/userinfo.email",
+			},
+			Endpoint: google.Endpoint,
 		},
 	}
 
@@ -69,6 +77,7 @@ func main() {
 	mux.HandleFunc("/api/emails", srv.requireAuth(srv.handleEmails))
 	mux.HandleFunc("/api/emails/", srv.requireAuth(srv.handleEmailByID))
 	mux.HandleFunc("/api/send", srv.requireAuth(srv.handleSend))
+	mux.HandleFunc("/api/profile", srv.requireAuth(srv.handleProfile))
 
 	// --- Static frontend + SPA fallback ---
 	mux.HandleFunc("/", srv.handleStatic)
@@ -147,7 +156,10 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 type ctxKey string
 
-const gmailClientKey ctxKey = "gmail"
+const (
+	gmailClientKey ctxKey = "gmail"
+	tokenSourceKey ctxKey = "tokensrc"
+)
 
 // requireAuth validates the session token, builds a Gmail client whose token
 // source persists rotated access tokens back to the store (the Node version
@@ -172,12 +184,19 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		ctx := context.WithValue(r.Context(), gmailClientKey, svc)
+		// Expose the same persisting token source so non-Gmail handlers (e.g. the
+		// userinfo profile fetch) can authenticate without a Gmail client.
+		ctx = context.WithValue(ctx, tokenSourceKey, oauth2.TokenSource(ts))
 		next(w, r.WithContext(ctx))
 	}
 }
 
 func gmailFrom(r *http.Request) *gmail.Service {
 	return r.Context().Value(gmailClientKey).(*gmail.Service)
+}
+
+func tokenSourceFrom(r *http.Request) oauth2.TokenSource {
+	return r.Context().Value(tokenSourceKey).(oauth2.TokenSource)
 }
 
 // --- Email handlers ---

@@ -96,6 +96,98 @@ a { color: inherit; text-decoration: none; }
 .compose-btn:hover { color: var(--ink); }
 .compose-btn .icon { display: block; }
 
+/* === Profile chip + dropdown ============================================= */
+/* Round Google avatar at the head of the right cluster (profile · search ·
+   send). The wrapper is the positioning context for the dropdown. */
+.profile { position: relative; flex: 0 0 auto; }
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--rule-2);
+  border-radius: 50%;
+  background: var(--bg-2);
+  color: var(--ink-2);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color .15s;
+}
+.avatar:hover { border-color: var(--ink-4); }
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar-initials {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: .02em;
+  color: var(--ink-2);
+  user-select: none;
+}
+
+/* Dropdown anchored under the avatar, right-aligned to it. Raised surface with
+   the account identity header, a divider, then Settings + Sign out items. */
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 60;
+  min-width: 220px;
+  padding: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--rule-2);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.profile-id {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px 10px;
+}
+.profile-name {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 13.5px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-email {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.profile-sep {
+  height: 1px;
+  background: var(--rule);
+  margin: 2px 4px 4px;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-align: left;
+  transition: background .12s, color .12s;
+}
+.menu-item:hover { background: var(--bg-3); color: var(--ink); }
+.menu-item svg { flex: 0 0 auto; color: var(--ink-3); }
+.menu-item:hover svg { color: var(--ink-2); }
+
 .search-box {
   display: flex;
   align-items: center;
@@ -156,6 +248,9 @@ a { color: inherit; text-decoration: none; }
   .topbar .right { gap: 8px; min-width: 0; flex: 1 1 auto; justify-content: flex-end; }
   .search-box { padding: 7px 11px; max-width: 200px; }
   .search-box .slash { display: none; }
+  .avatar { width: 28px; height: 28px; }
+  /* Keep the dropdown inside the viewport on narrow screens. */
+  .profile-menu { min-width: 200px; }
 }
 
 /* === Page shell ========================================================== */
@@ -530,6 +625,37 @@ main.page-main {
 }
 .reply-btn:hover { color: var(--ink); border-color: var(--ink-4); }
 .reply-btn svg { display: block; }
+
+/* === Settings ============================================================ */
+/* Settings reuses .reader (crumb, serif h1, mono head). Each control sits in a
+   row: label/description on the left, the action button on the right. */
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--rule);
+}
+.settings-row:first-of-type { border-top: 1px solid var(--rule); }
+.settings-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.settings-row-title {
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.settings-row-sub {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
 
 /* === Footer ============================================================== */
 .site-footer {

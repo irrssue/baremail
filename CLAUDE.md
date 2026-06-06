@@ -22,6 +22,7 @@ A bare, minimal email reader. Gmail OAuth → read-only inbox view. Nothing more
   so sessions written by the old Node server still load
 - `gmail.go` — header parse, MIME body walk, relative-time formatting
 - `send.go` — `/api/send`: recipient validation, Markdown render, multipart/alternative build, reply threading
+- `profile.go` — `/api/profile`: signed-in Google account (name/email/photo) via the OIDC userinfo endpoint
 - `dotenv.go` — minimal `.env` loader (stands in for Node's dotenv)
 - `*_test.go` — unit + interop tests (`go test ./...`)
 
@@ -33,8 +34,12 @@ API contract (unchanged from the old Node server, byte-for-byte JSON):
 `POST /api/send` `{to,cc,bcc,subject,body,inReplyTo,threadId}` → `{id,threadId}`
 (body is **Markdown** → rendered server-side via goldmark into a
 `multipart/alternative` message; `inReplyTo`+`threadId` thread a reply; 403 if
-the session was consented before the send scope existed).
-OAuth scopes: `gmail.readonly` + `gmail.send`.
+the session was consented before the send scope existed) ·
+`GET /api/profile` → `{name,email,picture}` (signed-in Google account for the
+topbar profile chip, fetched from the OIDC userinfo endpoint; 403 if the session
+predates the userinfo scopes → frontend falls back to an initials chip).
+OAuth scopes: `gmail.readonly` + `gmail.send` + `userinfo.profile` +
+`userinfo.email`.
 Env: `PORT CLIENT_URL CLIENT_ID CLIENT_SECRET REDIRECT_URI STATIC_DIR SESSIONS_FILE`.
 
 ## Design system
@@ -58,7 +63,9 @@ Dark, typographic. All tokens live in
 Fonts: **Fraunces** (titles/brand), **JetBrains Mono** (meta, time, labels),
 **Inter** (body). Loaded via Google Fonts in `baremail-app/index.html`.
 
-Layout: sticky serif brand topbar, 820px centered column, mono footer.
+Layout: sticky serif brand topbar (right cluster = profile avatar · search ·
+compose), 820px centered column, mono footer. The avatar opens a dropdown
+(account identity · Settings · Sign out); Settings reuses the reader shell.
 List row = `who | subject·snippet | relative-time`. Reader = serif subject,
 mono From/To head, prose body. Mobile breakpoint at 600px.
 
