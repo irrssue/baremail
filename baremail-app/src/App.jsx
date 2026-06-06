@@ -2,8 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react"
 
 const API = import.meta.env.VITE_API_URL || ""
 
+// localStorage (not sessionStorage) so the session survives a full page
+// refresh and tab close, not just an in-tab navigation.
 function getToken() {
-  return sessionStorage.getItem("bm_token")
+  return localStorage.getItem("bm_token")
 }
 
 // Bucket an email timestamp the way twobird.com does: Today, Yesterday,
@@ -163,7 +165,7 @@ function App() {
     const params = new URLSearchParams(window.location.search)
     const urlToken = params.get("token")
     if (urlToken) {
-      sessionStorage.setItem("bm_token", urlToken)
+      localStorage.setItem("bm_token", urlToken)
       window.history.replaceState({}, "", window.location.pathname)
     }
 
@@ -233,7 +235,7 @@ function App() {
 
   function signOut() {
     fetch(`${API}/auth/logout`, { headers: authHeaders() }).then(() => {
-      sessionStorage.removeItem("bm_token")
+      localStorage.removeItem("bm_token")
       setAuthenticated(false)
       setEmails([])
       setSelected(null)
