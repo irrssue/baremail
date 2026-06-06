@@ -99,7 +99,7 @@ a { color: inherit; text-decoration: none; }
 /* === Profile chip + dropdown ============================================= */
 /* Round Google avatar at the head of the right cluster (profile · search ·
    send). The wrapper is the positioning context for the dropdown. */
-.profile { position: relative; flex: 0 0 auto; }
+.profile { position: relative; flex: 0 0 auto; display: flex; align-items: center; }
 .avatar {
   display: inline-flex;
   align-items: center;
