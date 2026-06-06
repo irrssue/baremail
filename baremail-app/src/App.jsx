@@ -70,15 +70,19 @@ function HtmlBody({ html }) {
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
 <base target="_blank">
 <style>
-  html,body{margin:0;padding:0;background:#0b0d0f;color:#e2e2e1;
+  html,body{margin:0;padding:0;background:#0b0d0f !important;color:#e2e2e1;
     font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
   body{padding:24px;overflow-x:hidden;word-break:break-word;
     -webkit-font-smoothing:antialiased;}
   img{max-width:100%;height:auto;}
   a{color:#826b49;word-break:break-all;}
-  /* tables/blocks that assume a white page get a light surface so their own
-     dark text stays legible; anything that sets its own colors wins via the cascade */
-  table,td,th{background-color:transparent;}
+  /* Senders ship white/light page chrome (cards, table cells, body wrappers)
+     assuming a white client. Force every container background to baremail's
+     dark page so nothing renders as a white card. Images and explicitly
+     non-white colors are left alone. */
+  *{background-color:transparent !important;background-image:none !important;}
+  body,table,td,th,div,tr,tbody,thead,center,p,span,section,article{
+    background:transparent !important;}
 </style></head>
 <body>${html}
 <script>
@@ -106,7 +110,7 @@ function HtmlBody({ html }) {
       title="email"
       sandbox="allow-popups allow-popups-to-escape-sandbox"
       srcDoc={srcDoc}
-      style={{ height }}
+      style={{ height: `max(${height}px, 60vh)` }}
     />
   )
 }
