@@ -216,6 +216,35 @@ main.page-main {
   align-self: center;
 }
 
+/* Read vs unread. Read is the quiet default: everything steps toward the
+   faint metadata ink. Unread reasserts full contrast and weight, with a warm
+   accent dot in the left gutter so it's scannable without reading the names. */
+.mailrow.is-read .who {
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.mailrow.is-read .subj { color: var(--ink-3); }
+
+.mailrow.is-unread .who {
+  font-weight: 700;
+  color: var(--ink);
+}
+.mailrow.is-unread .subj {
+  font-weight: 600;
+  color: var(--ink);
+}
+.mailrow.is-unread::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hot);
+}
+
 @media (max-width: 600px) {
   .mailrow {
     grid-template-columns: 1fr auto;

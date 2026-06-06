@@ -195,7 +195,9 @@ app.get("/api/emails", requireAuth, async (req, res) => {
         const name = nameMatch ? nameMatch[1].trim() : from;
         const sender = nameMatch ? nameMatch[2] : from;
 
-        return { id: msg.id, name, sender, subject, snippet: full.data.snippet, date: relTime(dateHeader), ts: tsOf(dateHeader) };
+        const unread = full.data.labelIds?.includes("UNREAD") || false;
+
+        return { id: msg.id, name, sender, subject, snippet: full.data.snippet, date: relTime(dateHeader), ts: tsOf(dateHeader), unread };
       })
     );
 

@@ -316,7 +316,7 @@ function App() {
               {group.items.map((email) => (
                 <div
                   key={email.id}
-                  className="mailrow"
+                  className={`mailrow ${email.unread ? "is-unread" : "is-read"}`}
                   onClick={() => openEmail(email)}
                 >
                   <span className="who">{email.name}</span>
