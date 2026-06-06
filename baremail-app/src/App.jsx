@@ -70,11 +70,15 @@ function HtmlBody({ html }) {
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
 <base target="_blank">
 <style>
-  html,body{margin:0;padding:0;background:#fff;color:#1a1a1a;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-  body{padding:24px;overflow-x:hidden;word-break:break-word;}
+  html,body{margin:0;padding:0;background:#0b0d0f;color:#e2e2e1;
+    font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  body{padding:24px;overflow-x:hidden;word-break:break-word;
+    -webkit-font-smoothing:antialiased;}
   img{max-width:100%;height:auto;}
-  a{word-break:break-all;}
+  a{color:#826b49;word-break:break-all;}
+  /* tables/blocks that assume a white page get a light surface so their own
+     dark text stays legible; anything that sets its own colors wins via the cascade */
+  table,td,th{background-color:transparent;}
 </style></head>
 <body>${html}
 <script>
