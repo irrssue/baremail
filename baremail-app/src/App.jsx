@@ -96,19 +96,20 @@ function HtmlBody({ html }) {
     return p[0]>225 && p[1]>225 && p[2]>225;
   }
   function darken(){
-    var els=document.querySelectorAll("*");
+    var els=document.querySelectorAll("body *");
     for(var i=0;i<els.length;i++){
-      var el=els[i];
-      var cs=getComputedStyle(el);
-      if(isLight(cs.backgroundColor)) el.style.setProperty("background-color","transparent","important");
-      if(el.hasAttribute("bgcolor")){
-        var bg=el.getAttribute("bgcolor");
-        if(/^#?(f|e)/i.test(bg.replace("#",""))) el.style.setProperty("background-color","transparent","important");
-      }
-      // Lift dark text so it stays readable on the dark surface.
-      var t=cs.color && cs.color.match(/\\d+/g);
-      if(t && +t[0]<90 && +t[1]<90 && +t[2]<90)
-        el.style.setProperty("color","#e8e8e6","important");
+      try{
+        var el=els[i];
+        var cs=getComputedStyle(el);
+        if(isLight(cs.backgroundColor)) el.style.setProperty("background-color","transparent","important");
+        if(el.hasAttribute&&el.hasAttribute("bgcolor")){
+          var bg=(el.getAttribute("bgcolor")||"").replace("#","").toLowerCase();
+          if(bg==="ffffff"||bg==="fff"||/^(f|e)/.test(bg)) el.style.setProperty("background-color","transparent","important");
+        }
+        // Lift near-black text so it stays readable on the dark surface.
+        var t=cs.color&&cs.color.match(/\\d+/g);
+        if(t&&+t[0]<90&&+t[1]<90&&+t[2]<90) el.style.setProperty("color","#e8e8e6","important");
+      }catch(e){}
     }
   }
   function report(){parent.postMessage({__bmHeight:document.body.scrollHeight},"*");}
@@ -137,7 +138,7 @@ function HtmlBody({ html }) {
       className="body-html"
       title="email"
       scrolling="no"
-      sandbox="allow-popups allow-popups-to-escape-sandbox"
+      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
       srcDoc={srcDoc}
       style={{ height: `${height}px` }}
     />
