@@ -52,7 +52,7 @@ func main() {
 			ClientID:     os.Getenv("CLIENT_ID"),
 			ClientSecret: os.Getenv("CLIENT_SECRET"),
 			RedirectURL:  env("REDIRECT_URI", "http://localhost:3001/auth/google/callback"),
-			Scopes:       []string{gmail.GmailReadonlyScope},
+			Scopes:       []string{gmail.GmailReadonlyScope, gmail.GmailSendScope},
 			Endpoint:     google.Endpoint,
 		},
 	}
@@ -68,6 +68,7 @@ func main() {
 	// --- Email routes (require auth) ---
 	mux.HandleFunc("/api/emails", srv.requireAuth(srv.handleEmails))
 	mux.HandleFunc("/api/emails/", srv.requireAuth(srv.handleEmailByID))
+	mux.HandleFunc("/api/send", srv.requireAuth(srv.handleSend))
 
 	// --- Static frontend + SPA fallback ---
 	mux.HandleFunc("/", srv.handleStatic)

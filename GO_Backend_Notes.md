@@ -18,7 +18,7 @@ where and why.
 - Token store: disk-backed (`sessions.json`), atomic + owner-only (0600), debounced writes
 - Auth: `x-session-token` header (same as Node)
 - Single origin: the Go server also serves the built `baremail-app/dist`
-- Tests: `go test ./...` → **25 tests**, all green
+- Tests: `go test ./...` → **29 tests**, all green
 - Deploy: `deploy.sh` cross-compiles linux/amd64 and re-points pm2 at the binary
 
 ---
@@ -29,6 +29,7 @@ where and why.
 |------|-----|----------------|
 | `main.go` | 390 | HTTP routes, OAuth config, CORS, auth middleware, static + SPA fallback, email handlers |
 | `gmail.go` | 168 | Email structs, From-header parse, MIME body walk, relative-time + timestamp formatting, base64 decode |
+| `send.go` | 135 | `POST /api/send`: recipient parse/validate, RFC 2822 MIME build (RFC 2047 subject), Gmail send, scope-403 mapping |
 | `sessions.go` | 131 | Disk-backed token store: load / get / set / delete / debounced atomic flush, file-perm hardening |
 | `googletoken.go` | 104 | Token JSON in `googleapis` wire shape (`expiry_date` millis) so the old Node `sessions.json` still loads |
 | `dotenv.go` | 60 | Minimal `.env` loader (stand-in for Node's dotenv) |
@@ -45,12 +46,13 @@ Every route, method, and JSON shape matches the old Express server exactly.
 
 | Method | Path | Auth | Response |
 |--------|------|------|----------|
-| GET | `/auth/google` | — | 302 redirect to Google consent (`access_type=offline`, scope `gmail.readonly`) |
+| GET | `/auth/google` | — | 302 redirect to Google consent (`access_type=offline`, scopes `gmail.readonly` + `gmail.send`) |
 | GET | `/auth/google/callback?code=` | — | exchanges code, stores session, 302 → `CLIENT_URL?token=<sessionToken>` |
 | GET | `/auth/status` | header | `{"authenticated": bool}` |
 | GET | `/auth/logout` | header | `{"ok": true}` (deletes the session) |
 | GET | `/api/emails?pageToken=` | **required** | `{"emails":[…], "nextPageToken": string\|null}` |
 | GET | `/api/emails/:id` | **required** | full email (see below) |
+| POST | `/api/send` | **required** | `{to,subject,body}` → `{"id": <sent msg id>}`; `403` if session lacks send scope |
 | GET | `/*` (non-api/auth) | — | static file, else `index.html` (SPA fallback) |
 
 **Auth**: `x-session-token: <hex>` header. Missing/unknown → `401 {"error":"Not authenticated"}`.
@@ -139,7 +141,20 @@ chmod'd 0600/0700 on every boot.
 `index.html`. `/api` and `/auth` have their own mux entries so they never reach
 here.
 
-### 6. Relative-time formatting parity
+### 6. Send scope is additive — old sessions can't send until re-consent
+`/auth/google` now requests `gmail.readonly` **+** `gmail.send`. Sessions that
+consented under readonly-only keep reading fine but Google rejects their send
+calls with a 403 (insufficient scope). `handleSend` detects that
+(`googleapi.Error` code 403/401) and returns its own 403 with a "log out and
+sign in again" message, so the frontend can prompt re-auth instead of showing a
+generic failure. New logins get both scopes in one consent screen.
+
+The wire body is plain-text only: `buildMIME` writes To / Subject (RFC 2047
+encoded-word so non-ASCII subjects survive) / `text/plain; charset=UTF-8`, CRLF
+line endings, and lets Gmail fill From / Date / Message-ID. Recipients go
+through `net/mail.ParseAddressList` (comma-separated, each validated).
+
+### 7. Relative-time formatting parity
 Go's `time` reference-time layout reproduces the JS `toLocaleTimeString` /
 `toLocaleDateString` en-US output: `3:04 PM` (leading-zero hour stripped) for
 today, `Jan 2` for older. `parseDate` tolerates the RFC formats Gmail Date
@@ -151,7 +166,7 @@ headers use and strips trailing `(UTC)`-style comments.
 
 ```bash
 cd server && go run .          # :3001 (API + serves built frontend)
-cd server && go test ./...     # 25 unit + interop tests
+cd server && go test ./...     # 29 unit + interop tests
 cd server && go vet ./...
 ```
 Needs Go 1.26+. Reads `server/.env` from the working dir.
@@ -208,11 +223,14 @@ grpc, protobuf, x/net, x/crypto…). No external web framework, no external dote
 
 ---
 
-## Test inventory (`go test ./...` → 25)
+## Test inventory (`go test ./...` → 29)
 
 - **gmail_test.go** — `splitFrom`, `headerValue`, `hasLabel`, `relTime` (same-day /
   other-day / empty / garbage), `tsOf`, `walkBody` (first-of-each / nested),
   summary + full JSON key shapes
+- **send_test.go** — `parseRecipients` (single / list / display-name / blank /
+  garbage), `buildMIME` (header shape + no bare LF), non-ASCII subject is RFC 2047
+  encoded, `normalizeCRLF`
 - **server_test.go** — store persist+reload (0600 check), delete, token merge
   (keeps refresh / nil old), `/auth/status`, `/auth/logout`, requireAuth rejects
   missing token, CORS preflight, SPA fallback, traversal guard, random token

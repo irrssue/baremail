@@ -161,18 +161,44 @@ function HtmlBody({ html }) {
 }
 
 // Full-page compose view — a twin of the reader layout (820px column, serif
-// heading, mono From/To-style labels). The Send button is inert for now; the
-// backend send route + Gmail send scope land in the next step.
+// heading, mono From/To-style labels). Send POSTs { to, subject, body } to
+// /api/send; the backend builds the RFC 2822 message and hands it to Gmail.
 function Compose({ onClose }) {
   const [to, setTo] = useState("")
   const [subject, setSubject] = useState("")
   const [body, setBody] = useState("")
+  const [status, setStatus] = useState("idle") // idle | sending | sent | error
+  const [error, setError] = useState("")
   const toRef = useRef(null)
 
   // Land focus in the To field when the view opens.
   useEffect(() => {
     toRef.current?.focus()
   }, [])
+
+  const canSend = to.trim() && body.trim() && status !== "sending"
+
+  const send = useCallback(async () => {
+    setStatus("sending")
+    setError("")
+    try {
+      const res = await fetch(`${API}/api/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ to, subject, body }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || "Failed to send")
+      }
+      setStatus("sent")
+      // Brief confirmation, then drop back to the inbox.
+      setTimeout(onClose, 700)
+    } catch (e) {
+      setStatus("error")
+      setError(e.message)
+    }
+  }, [to, subject, body, onClose])
 
   return (
     <article className="reader compose">
@@ -214,8 +240,14 @@ function Compose({ onClose }) {
         placeholder="Write your message…"
       />
       <div className="compose-actions">
-        <button className="send-btn" type="button" disabled>
-          send
+        {error && <span className="compose-error">{error}</span>}
+        <button
+          className="send-btn"
+          type="button"
+          onClick={send}
+          disabled={!canSend}
+        >
+          {status === "sending" ? "sending…" : status === "sent" ? "sent" : "send"}
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M2.3 10.6 20.7 2.5c1-.45 2 .55 1.55 1.55l-8.1 18.4c-.5 1.13-2.15 1-2.47-.2l-1.9-6.85a1 1 0 0 0-.68-.69l-6.85-1.9c-1.2-.33-1.33-1.97-.2-2.47Z" />
           </svg>

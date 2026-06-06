@@ -27,7 +27,9 @@ API contract (unchanged from the old Node server, byte-for-byte JSON):
 `GET /auth/google` · `/auth/google/callback?code=` → redirect `CLIENT_URL?token=` ·
 `/auth/status` → `{authenticated}` · `/auth/logout` → `{ok}` ·
 `/api/emails?pageToken=` → `{emails:[{id,name,sender,subject,snippet,date,ts,unread}],nextPageToken}` ·
-`/api/emails/:id` → `{id,name,sender,subject,to,body,bodyHtml,snippet}`.
+`/api/emails/:id` → `{id,name,sender,subject,to,body,bodyHtml,snippet}` ·
+`POST /api/send` `{to,subject,body}` → `{id}` (builds RFC 2822, Gmail sends; 403 if the session was consented before the send scope existed).
+OAuth scopes: `gmail.readonly` + `gmail.send`.
 Env: `PORT CLIENT_URL CLIENT_ID CLIENT_SECRET REDIRECT_URI STATIC_DIR SESSIONS_FILE`.
 
 ## Design system
