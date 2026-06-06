@@ -72,12 +72,12 @@ function HtmlBody({ html }) {
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
 <base target="_blank">
 <style>
-  html,body{margin:0;padding:0;background:#ffffff;color:#1a1a1a;
+  html,body{margin:0;padding:0;background:#1a1a1a;color:#f3f3f1;
     font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
-  body{padding:24px;overflow-x:hidden;word-break:break-word;
+  body{padding:0;overflow:hidden;word-break:break-word;
     -webkit-font-smoothing:antialiased;}
   img{max-width:100%;height:auto;}
-  a{color:#826b49;word-break:break-all;}
+  a{color:#b89a6a;word-break:break-all;}
 </style></head>
 <body>${html}
 <script>
@@ -103,9 +103,10 @@ function HtmlBody({ html }) {
       ref={ref}
       className="body-html"
       title="email"
+      scrolling="no"
       sandbox="allow-popups allow-popups-to-escape-sandbox"
       srcDoc={srcDoc}
-      style={{ height: `max(${height}px, 60vh)` }}
+      style={{ height: `${height}px` }}
     />
   )
 }
