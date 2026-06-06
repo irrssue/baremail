@@ -1,9 +1,42 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+// postSend drives handleSend with a raw JSON body and returns the recorder.
+// The bad-input paths (validation 400s) fire before any Gmail call, so no mock
+// Gmail client is needed.
+func postSend(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	s := newTestServer(t)
+	r := httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.handleSend(w, r)
+	return w
+}
+
+func TestHandleSendRejectsInjectedInReplyTo(t *testing.T) {
+	w := postSend(t, `{"to":"a@x.com","body":"hi","inReplyTo":"<a@b>\r\nBcc: evil@x.com"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("injected inReplyTo: status = %d; want 400\nbody: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleSendRejectsBadRecipient(t *testing.T) {
+	if w := postSend(t, `{"to":"not-an-email","body":"hi"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad recipient: status = %d; want 400", w.Code)
+	}
+}
+
+func TestHandleSendRejectsEmptyBody(t *testing.T) {
+	if w := postSend(t, `{"to":"a@x.com","body":"   "}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("empty body: status = %d; want 400", w.Code)
+	}
+}
 
 func TestParseRecipients(t *testing.T) {
 	cases := []struct {
@@ -106,6 +139,53 @@ func TestBuildMIMEOmitsEmptyCcBcc(t *testing.T) {
 	}
 	if strings.Contains(raw, "Bcc:") {
 		t.Errorf("Bcc header should be absent when empty:\n%s", raw)
+	}
+}
+
+func TestValidInReplyTo(t *testing.T) {
+	good := []string{
+		"<abc123@mail.gmail.com>",
+		"<CADnq=+u_8@example.com>",
+	}
+	for _, s := range good {
+		if !validInReplyTo(s) {
+			t.Errorf("validInReplyTo(%q) = false; want true", s)
+		}
+	}
+	bad := []string{
+		"",                              // empty handled by caller, not valid here
+		"abc@example.com",               // missing angle brackets
+		"<a@b> <c@d>",                   // two ids / whitespace
+		"<a@b>\r\nBcc: evil@x.com",      // CRLF injection
+		"<a@b>\nSubject: forged",        // bare LF injection
+		"<a b@example.com>",             // internal whitespace
+		"<no-at-sign>",                  // not an addr-spec
+	}
+	for _, s := range bad {
+		if validInReplyTo(s) {
+			t.Errorf("validInReplyTo(%q) = true; want false", s)
+		}
+	}
+}
+
+func TestBuildMIMEHeaderInjectionStripped(t *testing.T) {
+	// Defense-in-depth: even if a raw CRLF value reaches buildMIME, the header
+	// writer must not fold a forged header onto the wire.
+	raw := mustBuildMIME(t, mimeInput{
+		to:        []string{"a@x.com"},
+		subject:   "hi\r\nBcc: evil@x.com",
+		body:      "hi",
+		inReplyTo: "<a@b>\r\nX-Injected: 1",
+	})
+	// The payload may survive as inert text inside a value; what must NOT exist
+	// is a folded header line — i.e. the injected token at the start of a line.
+	if strings.Contains(raw, "\nX-Injected") {
+		t.Errorf("injected header folded onto its own line:\n%s", raw)
+	}
+	// Subject CRLF is neutralized by RFC 2047 encoding; ensure no raw Bcc line
+	// appears from the subject payload either.
+	if strings.Contains(raw, "\nBcc: evil@x.com") {
+		t.Errorf("forged Bcc survived:\n%s", raw)
 	}
 }
 

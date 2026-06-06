@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/textproto"
+	"regexp"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -36,6 +37,19 @@ type sendRequest struct {
 // md renders Markdown → HTML. GFM gives tables, strikethrough, autolinks, and
 // task lists — the things a person actually types in a day-to-day email.
 var md = goldmark.New(goldmark.WithExtensions(extension.GFM))
+
+// msgIDRe matches a single RFC 5322 msg-id: one angle-bracketed addr-spec with
+// no whitespace. inReplyTo reaches us from the Message-ID header of an *inbound*
+// (attacker-controllable) email, so it must be validated before it's written to
+// a raw header — otherwise a crafted value could inject CRLF and forge headers
+// (Bcc, extra body, etc.) into the outgoing reply. Recipients (net/mail) and the
+// subject (RFC 2047 encoding) are already CRLF-safe; this is the one raw path.
+var msgIDRe = regexp.MustCompile(`^<[^\s<>@]+@[^\s<>@]+>$`)
+
+// validInReplyTo reports whether s is safe to write into In-Reply-To/References.
+func validInReplyTo(s string) bool {
+	return !strings.ContainsAny(s, "\r\n") && msgIDRe.MatchString(s)
+}
 
 // handleSend builds an RFC 2822 multipart/alternative message (Markdown source
 // as text/plain + rendered HTML as text/html) and hands it to Gmail's
@@ -76,13 +90,22 @@ func (s *server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// inReplyTo comes from an inbound email's Message-ID and is written to a raw
+	// header — reject anything that isn't a clean single msg-id (CRLF-injection
+	// guard). Empty is fine: it just means "not a reply".
+	inReplyTo := strings.TrimSpace(req.InReplyTo)
+	if inReplyTo != "" && !validInReplyTo(inReplyTo) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid In-Reply-To"})
+		return
+	}
+
 	raw, err := buildMIME(mimeInput{
 		to:        to,
 		cc:        cc,
 		bcc:       bcc,
 		subject:   req.Subject,
 		body:      req.Body,
-		inReplyTo: strings.TrimSpace(req.InReplyTo),
+		inReplyTo: inReplyTo,
 	})
 	if err != nil {
 		log.Printf("Build MIME error: %v", err)
@@ -166,7 +189,13 @@ func buildMIME(in mimeInput) ([]byte, error) {
 	w := multipart.NewWriter(&b)
 
 	// --- Top-level headers, written by hand before the multipart body. ---
-	header := func(k, v string) { fmt.Fprintf(&b, "%s: %s\r\n", k, v) }
+	// Strip CR/LF from every value as a last-ditch header-injection guard: even
+	// if a caller skips validation, a stray newline can't fold in a forged
+	// header here. (Callers still validate up front — this is defense in depth.)
+	header := func(k, v string) {
+		v = strings.NewReplacer("\r", "", "\n", "").Replace(v)
+		fmt.Fprintf(&b, "%s: %s\r\n", k, v)
+	}
 	header("To", strings.Join(in.to, ", "))
 	if len(in.cc) > 0 {
 		header("Cc", strings.Join(in.cc, ", "))

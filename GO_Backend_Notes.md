@@ -18,7 +18,7 @@ where and why.
 - Token store: disk-backed (`sessions.json`), atomic + owner-only (0600), debounced writes
 - Auth: `x-session-token` header (same as Node)
 - Single origin: the Go server also serves the built `baremail-app/dist`
-- Tests: `go test ./...` → **34 tests**, all green
+- Tests: `go test ./...` → **39 tests**, all green
 - Deploy: `deploy.sh` cross-compiles linux/amd64 and re-points pm2 at the binary
 
 ---
@@ -166,6 +166,15 @@ server-side — enough for Gmail/most clients to thread). The request's `threadI
 is set on the `gmail.Message` so Gmail attaches the reply to the right
 conversation. The frontend gets `messageId`/`threadId` from `/api/emails/:id`.
 
+**Header-injection guard (CRLF)**: `inReplyTo` originates from the `Message-ID`
+of an *inbound* (attacker-controllable) email, and it's the one user-influenced
+value written to a raw header. `handleSend` validates it against `msgIDRe`
+(`^<[^\s<>@]+@[^\s<>@]+>$`, no CR/LF) and 400s otherwise; as defense in depth the
+`buildMIME` header writer also strips CR/LF from every value, so even an
+unvalidated caller can't fold a forged header (Bcc, extra body) onto the wire.
+Recipients are already laundered by `net/mail`, and the subject by RFC 2047
+encoding — `inReplyTo` was the gap.
+
 ### 7. Relative-time formatting parity
 Go's `time` reference-time layout reproduces the JS `toLocaleTimeString` /
 `toLocaleDateString` en-US output: `3:04 PM` (leading-zero hour stripped) for
@@ -178,7 +187,7 @@ headers use and strips trailing `(UTC)`-style comments.
 
 ```bash
 cd server && go run .          # :3001 (API + serves built frontend)
-cd server && go test ./...     # 34 unit + interop tests
+cd server && go test ./...     # 39 unit + interop tests
 cd server && go vet ./...
 ```
 Needs Go 1.26+. Reads `server/.env` from the working dir.
@@ -246,7 +255,9 @@ grpc, protobuf, x/net, x/crypto…). No external web framework, no external dote
   display-name / blank / garbage), `buildMIME` multipart (plain keeps Markdown,
   html is rendered, no bare LF), Cc/Bcc present + omitted-when-empty, reply
   headers present + absent-when-fresh, non-ASCII subject RFC 2047 encoded,
-  `normalizeCRLF`
+  `normalizeCRLF`; **header-injection**: `validInReplyTo` (good ids vs CRLF /
+  multi-id / non-addr-spec), `buildMIME` strips CRLF from raw header values,
+  `handleSend` returns 400 on injected `inReplyTo` / bad recipient / empty body
 - **server_test.go** — store persist+reload (0600 check), delete, token merge
   (keeps refresh / nil old), `/auth/status`, `/auth/logout`, requireAuth rejects
   missing token, CORS preflight, SPA fallback, traversal guard, random token
