@@ -160,15 +160,80 @@ function HtmlBody({ html }) {
   )
 }
 
-function Shell({ children, onBrand, onSignOut, search }) {
+// Full-page compose view — a twin of the reader layout (820px column, serif
+// heading, mono From/To-style labels). The Send button is inert for now; the
+// backend send route + Gmail send scope land in the next step.
+function Compose({ onClose }) {
+  const [to, setTo] = useState("")
+  const [subject, setSubject] = useState("")
+  const [body, setBody] = useState("")
+  const toRef = useRef(null)
+
+  // Land focus in the To field when the view opens.
+  useEffect(() => {
+    toRef.current?.focus()
+  }, [])
+
+  return (
+    <article className="reader compose">
+      <button className="crumb" onClick={onClose}>
+        ← inbox
+      </button>
+      <h1>New message</h1>
+      <div className="head">
+        <div className="line">
+          <label className="label" htmlFor="cmp-to">To</label>
+          <input
+            id="cmp-to"
+            ref={toRef}
+            className="compose-input"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            placeholder="name@example.com"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </div>
+        <div className="line">
+          <label className="label" htmlFor="cmp-subj">Subject</label>
+          <input
+            id="cmp-subj"
+            className="compose-input"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="subject"
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </div>
+      </div>
+      <textarea
+        className="compose-body"
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        placeholder="Write your message…"
+      />
+      <div className="compose-actions">
+        <button className="send-btn" type="button" disabled>
+          send
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M2.3 10.6 20.7 2.5c1-.45 2 .55 1.55 1.55l-8.1 18.4c-.5 1.13-2.15 1-2.47-.2l-1.9-6.85a1 1 0 0 0-.68-.69l-6.85-1.9c-1.2-.33-1.33-1.97-.2-2.47Z" />
+          </svg>
+        </button>
+      </div>
+    </article>
+  )
+}
+
+function Shell({ children, onBrand, onCompose, search }) {
   return (
     <>
       <header className="topbar">
         <button className="brand" onClick={onBrand}>
           baremail
         </button>
-        {search && (
-          <div className="search">
+        <div className="right">
+          {search && (
             <div className="search-box">
               <svg
                 className="icon"
@@ -206,15 +271,28 @@ function Shell({ children, onBrand, onSignOut, search }) {
                 <span className="slash">/</span>
               )}
             </div>
-          </div>
-        )}
-        {onSignOut && (
-          <div className="right">
-            <button className="signout-btn" onClick={onSignOut}>
-              sign out
+          )}
+          {onCompose && (
+            <button
+              className="compose-btn"
+              onClick={onCompose}
+              aria-label="compose"
+              title="compose"
+            >
+              {/* Paper-plane / send arrow, flat — twin of the search magnifier. */}
+              <svg
+                className="icon"
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M2.3 10.6 20.7 2.5c1-.45 2 .55 1.55 1.55l-8.1 18.4c-.5 1.13-2.15 1-2.47-.2l-1.9-6.85a1 1 0 0 0-.68-.69l-6.85-1.9c-1.2-.33-1.33-1.97-.2-2.47Z" />
+              </svg>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </header>
       <main className="page-main">{children}</main>
       <footer className="site-footer">
@@ -241,6 +319,7 @@ function App() {
   const [nextPageToken, setNextPageToken] = useState(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const [query, setQuery] = useState("")
+  const [composing, setComposing] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
   const sentinelRef = useRef(null)
   const tokenRef = useRef(null)
@@ -334,10 +413,13 @@ function App() {
       .then((data) => setSelected(data))
   }
 
-  // Back button while reading: close the reader instead of leaving the app.
+  // Back button while reading/composing: close the overlay instead of leaving
+  // the app. Both reader and compose push a history entry, so one popstate
+  // handler closes whichever is open.
   useEffect(() => {
     function onPop() {
       setSelected(null)
+      setComposing(false)
     }
     window.addEventListener("popstate", onPop)
     return () => window.removeEventListener("popstate", onPop)
@@ -348,6 +430,18 @@ function App() {
   const closeReader = useCallback(() => {
     if (window.history.state?.bmReader) window.history.back()
     else setSelected(null)
+  }, [])
+
+  // Open the full-page compose view. Push a history entry so Back / Esc returns
+  // to the inbox, same as the reader.
+  const openCompose = useCallback(() => {
+    window.history.pushState({ bmCompose: true }, "")
+    setComposing(true)
+  }, [])
+
+  const closeCompose = useCallback(() => {
+    if (window.history.state?.bmCompose) window.history.back()
+    else setComposing(false)
   }, [])
 
   // Debounced search: refetch the inbox 250ms after typing stops. An empty
@@ -364,19 +458,20 @@ function App() {
   useEffect(() => {
     function onKey(e) {
       const inSearch = document.activeElement === searchInputRef.current
-      // `/` jumps to search unless already typing in a field.
-      if (e.key === "/" && !inSearch) {
+      // `/` jumps to search unless already typing in a field or composing.
+      if (e.key === "/" && !inSearch && !composing) {
         e.preventDefault()
         searchInputRef.current?.focus()
         return
       }
       if (e.key === "Escape") {
-        if (selected) closeReader()
+        if (composing) closeCompose()
+        else if (selected) closeReader()
         else if (inSearch) searchInputRef.current?.blur()
         return
       }
       // List nav only on the inbox view, and not while typing a search.
-      if (selected || inSearch || emails.length === 0) return
+      if (selected || composing || inSearch || emails.length === 0) return
       if (e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault()
         setActiveIdx((i) => Math.min(i + 1, emails.length - 1))
@@ -389,28 +484,14 @@ function App() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [selected, emails, activeIdx, closeReader])
+  }, [selected, composing, emails, activeIdx, closeReader, closeCompose])
 
   // Keep the active row scrolled into view as the cursor moves.
   useEffect(() => {
     if (activeIdx >= 0) rowRefs.current[activeIdx]?.scrollIntoView({ block: "nearest" })
   }, [activeIdx])
 
-  function signOut() {
-    fetch(`${API}/auth/logout`, { headers: authHeaders() }).then(() => {
-      localStorage.removeItem("bm_token")
-      setAuthenticated(false)
-      setEmails([])
-      setSelected(null)
-      setNextPageToken(null)
-      tokenRef.current = null
-      setQuery("")
-      queryRef.current = ""
-      setActiveIdx(-1)
-    })
-  }
-
-  // Props for the centered search box in the topbar.
+  // Props for the search box in the topbar.
   const searchProps = {
     value: query,
     onChange: setQuery,
@@ -446,9 +527,17 @@ function App() {
     )
   }
 
+  if (composing) {
+    return (
+      <Shell onBrand={closeCompose}>
+        <Compose onClose={closeCompose} />
+      </Shell>
+    )
+  }
+
   if (selected) {
     return (
-      <Shell onBrand={closeReader} onSignOut={signOut}>
+      <Shell onBrand={closeReader} onCompose={openCompose}>
         <article className="reader">
           <button className="crumb" onClick={closeReader}>
             ← inbox
@@ -477,7 +566,7 @@ function App() {
   const flatIndex = new Map(emails.map((e, i) => [e.id, i]))
 
   return (
-    <Shell onBrand={() => setSelected(null)} onSignOut={signOut} search={searchProps}>
+    <Shell onBrand={() => setSelected(null)} onCompose={openCompose} search={searchProps}>
       {emails.length === 0 ? (
         <div className="empty">
           {queryRef.current ? "No matches." : "Inbox empty."}

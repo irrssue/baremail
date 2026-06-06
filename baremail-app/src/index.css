@@ -71,40 +71,37 @@ a { color: inherit; text-decoration: none; }
   border: 0;
   padding: 0;
 }
+/* Right cluster: search box + compose icon, sitting flush right. The brand
+   stays left; space-between in .topbar pushes this cluster to the edge. */
 .topbar .right {
   display: flex;
   align-items: center;
-  gap: 14px;
-}
-.signout-btn {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--ink-3);
-  padding: 7px 13px;
-  border: 1px solid var(--rule-2);
-  border-radius: 999px;
-  line-height: 1;
-  background: none;
-  cursor: pointer;
-  transition: background .15s, border-color .15s, color .15s;
-}
-.signout-btn:hover { background: var(--bg-2); border-color: var(--ink-4); color: var(--ink); }
-
-/* Center search. Brand and right cluster keep natural width; the search
-   takes the middle and is itself capped + centered so it tracks the 820px
-   content column rather than sprawling edge-to-edge on wide screens. */
-.topbar .search {
-  flex: 1 1 auto;
-  display: flex;
-  justify-content: center;
+  gap: 12px;
   min-width: 0;
 }
+/* Flat compose icon — a twin of the search magnifier: no box, no border,
+   faint by default, full ink on hover. */
+.compose-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--ink-3);
+  line-height: 0;
+  transition: color .15s;
+}
+.compose-btn:hover { color: var(--ink); }
+.compose-btn .icon { display: block; }
+
 .search-box {
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  max-width: 440px;
+  max-width: 308px;
   padding: 8px 13px;
   background: var(--bg-2);
   border: 1px solid var(--rule-2);
@@ -156,7 +153,8 @@ a { color: inherit; text-decoration: none; }
 
 @media (max-width: 600px) {
   .topbar { padding: 14px 20px; column-gap: 14px; }
-  .search-box { padding: 7px 11px; }
+  .topbar .right { gap: 8px; min-width: 0; flex: 1 1 auto; justify-content: flex-end; }
+  .search-box { padding: 7px 11px; max-width: 200px; }
   .search-box .slash { display: none; }
 }
 
@@ -408,6 +406,71 @@ main.page-main {
   background: transparent;
   margin-top: 4px;
 }
+
+/* === Compose ============================================================= */
+/* Compose reuses the reader shell (.reader): same crumb, serif h1, mono head.
+   Here the head .line holds a label + a borderless text input so To/Subject
+   read as one continuous mono line, matching the reader's From/To head. */
+.compose .head .line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.compose-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 0;
+}
+.compose-input::placeholder { color: var(--ink-4); }
+
+.compose-body {
+  display: block;
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  border: 0;
+  background: none;
+  outline: none;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  line-height: 1.7;
+  margin-top: 4px;
+}
+.compose-body::placeholder { color: var(--ink-3); }
+
+.compose-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.send-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--bg);
+  background: var(--ink);
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: opacity .15s, background .15s;
+}
+.send-btn:hover { background: var(--ink-2); }
+.send-btn:disabled { opacity: .4; cursor: not-allowed; }
+.send-btn svg { display: block; }
 
 /* === Footer ============================================================== */
 .site-footer {
