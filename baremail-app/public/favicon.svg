@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges" width="64" height="64">
+  <!-- Hair (dark) -->
+  <rect x="4" y="0" width="8" height="1" fill="#2a1a0e"/>
+  <rect x="3" y="1" width="10" height="1" fill="#2a1a0e"/>
+  <rect x="3" y="2" width="2" height="2" fill="#2a1a0e"/>
+  <rect x="11" y="2" width="2" height="2" fill="#2a1a0e"/>
+  <rect x="3" y="3" width="1" height="1" fill="#2a1a0e"/>
+  <rect x="12" y="3" width="1" height="1" fill="#2a1a0e"/>
+
+  <!-- Face skin -->
+  <rect x="5" y="2" width="6" height="4" fill="#f5c9a0"/>
+  <rect x="4" y="3" width="1" height="3" fill="#f5c9a0"/>
+  <rect x="11" y="3" width="1" height="3" fill="#f5c9a0"/>
+
+  <!-- Eyes -->
+  <rect x="5" y="4" width="2" height="1" fill="#1a1a2e"/>
+  <rect x="9" y="4" width="2" height="1" fill="#1a1a2e"/>
+
+  <!-- Mouth smile -->
+  <rect x="6" y="6" width="1" height="1" fill="#c47a5a"/>
+  <rect x="9" y="6" width="1" height="1" fill="#c47a5a"/>
+  <rect x="7" y="7" width="2" height="1" fill="#c47a5a"/>
+
+  <!-- Neck -->
+  <rect x="7" y="6" width="2" height="1" fill="#f5c9a0"/>
+
+  <!-- Shirt / hoodie body (dark slate blue — techy vibe) -->
+  <rect x="4" y="7" width="8" height="5" fill="#3b4a6b"/>
+  <rect x="3" y="8" width="2" height="4" fill="#3b4a6b"/>
+  <rect x="11" y="8" width="2" height="4" fill="#3b4a6b"/>
+
+  <!-- Hoodie pocket accent -->
+  <rect x="6" y="10" width="4" height="2" fill="#2e3a57"/>
+
+  <!-- Small pixel "I" on shirt — for irrssue -->
+  <rect x="7" y="8" width="2" height="1" fill="#7eb8f7"/>
+  <rect x="7" y="9" width="2" height="1" fill="#7eb8f7"/>
+
+  <!-- Legs / pants (dark) -->
+  <rect x="5" y="12" width="3" height="3" fill="#1e2a3a"/>
+  <rect x="8" y="12" width="3" height="3" fill="#1e2a3a"/>
+
+  <!-- Shoes -->
+  <rect x="4" y="15" width="4" height="1" fill="#111111"/>
+  <rect x="8" y="15" width="4" height="1" fill="#111111"/>
+</svg>
