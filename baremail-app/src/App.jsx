@@ -76,7 +76,9 @@ function HtmlBody({ html }) {
   // through behind the mail rather than a solid dark block.
   // Media that already carries true colors (images, video, canvas, svg, and any
   // element painted with a background-image) is inverted a second time so it
-  // renders as designed. Height is reported up via postMessage so the parent
+  // renders as designed. A JS pass also strips the solid background-color off
+  // full-width layout wrappers so the page bg shows through behind the mail
+  // rather than the sender's own container panel. Height is reported up via postMessage so the parent
   // sizes the iframe to exact content; we never clip overflow (that collapses
   // scrollHeight and cuts the body off).
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
@@ -96,19 +98,32 @@ function HtmlBody({ html }) {
 </style></head>
 <body>${html}
 <script>
-  // Tag any element that paints a real background-image so it gets re-inverted
-  // back to its true colors (the root filter would otherwise negate it).
-  function markBgImages(){
+  // One walk over every element. For each we (a) tag real background-image els
+  // so they get re-inverted back to true colors, and (b) strip the solid
+  // background-color off full-width layout wrappers so baremail's page bg shows
+  // through behind the mail instead of the sender's container panel. We only
+  // clear wrappers that span ~the full body width and carry no background-image,
+  // so content cards, buttons, and banners (narrower, or image-painted) keep
+  // their own background.
+  function cleanup(){
+    var bw=document.body.clientWidth||600;
     var els=document.querySelectorAll("body *");
     for(var i=0;i<els.length;i++){
+      var el=els[i];
       try{
-        var bi=getComputedStyle(els[i]).backgroundImage;
-        if(bi && bi!=="none" && bi.indexOf("url(")!==-1) els[i].setAttribute("data-bm-bgimg","");
+        var cs=getComputedStyle(el);
+        var hasBgImg=cs.backgroundImage && cs.backgroundImage!=="none" && cs.backgroundImage.indexOf("url(")!==-1;
+        if(hasBgImg){ el.setAttribute("data-bm-bgimg",""); continue; }
+        var bc=cs.backgroundColor;
+        var paints=bc && bc!=="transparent" && bc!=="rgba(0, 0, 0, 0)";
+        if(paints && el.clientWidth>=bw*0.9){
+          el.style.setProperty("background-color","transparent","important");
+        }
       }catch(e){}
     }
   }
   function report(){parent.postMessage({__bmHeight:document.body.scrollHeight},"*");}
-  function pass(){markBgImages();report();}
+  function pass(){cleanup();report();}
   window.addEventListener("load",pass);
   window.addEventListener("resize",report);
   new ResizeObserver(report).observe(document.body);
