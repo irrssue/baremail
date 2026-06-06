@@ -99,14 +99,13 @@ function HtmlBody({ html }) {
 <body>${html}
 <script>
   // One walk over every element. For each we (a) tag real background-image els
-  // so they get re-inverted back to true colors, and (b) strip the solid
-  // background-color off full-width layout wrappers so baremail's page bg shows
-  // through behind the mail instead of the sender's container panel. We only
-  // clear wrappers that span ~the full body width and carry no background-image,
-  // so content cards, buttons, and banners (narrower, or image-painted) keep
-  // their own background.
+  // so they get re-inverted back to true colors and keep their own paint, and
+  // (b) strip the solid background-color off everything else so baremail's page
+  // bg (--bg) shows through behind the whole mail — no sender container panels,
+  // cards, or nested centered tables, regardless of width. Image-painted
+  // elements (logos, hero graphics, buttons drawn via background-image) are left
+  // alone so they render as designed.
   function cleanup(){
-    var bw=document.body.clientWidth||600;
     var els=document.querySelectorAll("body *");
     for(var i=0;i<els.length;i++){
       var el=els[i];
@@ -116,7 +115,7 @@ function HtmlBody({ html }) {
         if(hasBgImg){ el.setAttribute("data-bm-bgimg",""); continue; }
         var bc=cs.backgroundColor;
         var paints=bc && bc!=="transparent" && bc!=="rgba(0, 0, 0, 0)";
-        if(paints && el.clientWidth>=bw*0.9){
+        if(paints){
           el.style.setProperty("background-color","transparent","important");
         }
       }catch(e){}
