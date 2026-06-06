@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
 const path = require("path");
+const fs = require("fs");
 const { google } = require("googleapis");
 
 const app = express();
@@ -15,8 +16,58 @@ app.use(
   })
 );
 
-// In-memory token store: token -> oauth tokens
-const tokenStore = new Map();
+// Token store: sessionToken -> oauth tokens. Persisted to disk so sessions
+// survive a server restart/deploy (pm2 restart would otherwise wipe everyone).
+// SESSIONS_FILE defaults next to this file; keep it out of git (gitignored).
+const SESSIONS_FILE =
+  process.env.SESSIONS_FILE || path.join(__dirname, "sessions.json");
+
+function loadSessions() {
+  try {
+    const raw = fs.readFileSync(SESSIONS_FILE, "utf-8");
+    return new Map(Object.entries(JSON.parse(raw)));
+  } catch {
+    return new Map();
+  }
+}
+
+// The sessions file holds live OAuth access/refresh tokens. Keep both the file
+// and its parent dir owner-only (0600 / 0700) so other accounts on the host
+// can't read them; tighten an existing file's mode on every boot too.
+function secureSessionsPath() {
+  try {
+    fs.mkdirSync(path.dirname(SESSIONS_FILE), { recursive: true, mode: 0o700 });
+    fs.chmodSync(path.dirname(SESSIONS_FILE), 0o700);
+  } catch {}
+  try {
+    fs.chmodSync(SESSIONS_FILE, 0o600);
+  } catch {}
+}
+secureSessionsPath();
+
+const tokenStore = loadSessions();
+
+// Debounced write so rapid mutations coalesce into one disk flush.
+let saveTimer = null;
+function saveSessions() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const obj = Object.fromEntries(tokenStore);
+    // Write to a temp file with owner-only mode, then atomically rename into
+    // place. This guarantees the tokens file is never momentarily world-readable
+    // and a crash mid-write can't truncate the real file.
+    const tmp = `${SESSIONS_FILE}.${process.pid}.tmp`;
+    fs.writeFile(tmp, JSON.stringify(obj), { mode: 0o600 }, (err) => {
+      if (err) {
+        console.error("Failed to persist sessions:", err.message);
+        return;
+      }
+      fs.rename(tmp, SESSIONS_FILE, (rErr) => {
+        if (rErr) console.error("Failed to persist sessions:", rErr.message);
+      });
+    });
+  }, 200);
+}
 
 // Format an email Date header into a short relative label (e.g. "3h", "2d").
 function relTime(dateHeader) {
@@ -72,6 +123,7 @@ app.get("/auth/google/callback", async (req, res) => {
 
     const sessionToken = crypto.randomBytes(32).toString("hex");
     tokenStore.set(sessionToken, tokens);
+    saveSessions();
 
     const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
     res.redirect(`${clientUrl}?token=${sessionToken}`);
@@ -88,7 +140,7 @@ app.get("/auth/status", (req, res) => {
 
 app.get("/auth/logout", (req, res) => {
   const token = req.headers["x-session-token"];
-  if (token) tokenStore.delete(token);
+  if (token && tokenStore.delete(token)) saveSessions();
   res.json({ ok: true });
 });
 
@@ -101,6 +153,13 @@ function requireAuth(req, res, next) {
   }
   const oauth2Client = makeOAuthClient();
   oauth2Client.setCredentials(tokenStore.get(token));
+  // When Google rotates the access token (the refresh_token mints a fresh
+  // access_token after ~1h), persist the merged credentials so the on-disk
+  // session stays valid across restarts instead of going stale.
+  oauth2Client.on("tokens", (fresh) => {
+    tokenStore.set(token, { ...tokenStore.get(token), ...fresh });
+    saveSessions();
+  });
   req.oauth2Client = oauth2Client;
   next();
 }
