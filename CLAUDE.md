@@ -14,20 +14,20 @@ A bare, minimal email reader. Gmail OAuth → read-only inbox view. Nothing more
 
 ## Design system
 
-Dark-only, typographic — ported from news.irrssue.com. All tokens live in
+Light, typographic — ported from news.irrssue.com. All tokens live in
 `baremail-app/src/index.css` `:root`. **Keep this section in sync with that file.**
 
 | Token | Value | Use |
 |-------|-------|-----|
-| `--bg` | `#0b0d0f` | Page background |
-| `--bg-2` | `#141414` | Raised surface |
-| `--bg-3` | `#1a1a1a` | Active pill / kbd |
-| `--ink` | `#e2e2e1` | Primary text |
-| `--ink-2` | `#b8b8b7` | Secondary text |
-| `--ink-3` | `#8a8a89` | Faint / metadata |
-| `--ink-4` | `#585857` | Disabled / separators |
-| `--rule` | `#1e1e1c` | Dividers, borders |
-| `--rule-2` | `#262624` | Stronger dividers |
+| `--bg` | `#ffffff` | Page background |
+| `--bg-2` | `#f5f5f4` | Raised surface |
+| `--bg-3` | `#ececea` | Active pill / kbd |
+| `--ink` | `#1a1a1a` | Primary text |
+| `--ink-2` | `#44444a` | Secondary text |
+| `--ink-3` | `#76767a` | Faint / metadata |
+| `--ink-4` | `#a6a6a6` | Disabled / separators |
+| `--rule` | `#e6e6e3` | Dividers, borders |
+| `--rule-2` | `#dcdcd9` | Stronger dividers |
 | `--op` / `--hot` | `#826b49` | Warm accent |
 
 Fonts: **Fraunces** (titles/brand), **JetBrains Mono** (meta, time, labels),
