@@ -430,6 +430,21 @@ main.page-main {
 }
 .compose-input::placeholder { color: var(--ink-4); }
 
+/* "Cc Bcc" reveal — a faint mono affordance at the end of the To row. */
+.cc-toggle {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .02em;
+  color: var(--ink-4);
+  padding: 0 0 0 8px;
+  transition: color .15s;
+}
+.cc-toggle:hover { color: var(--ink-2); }
+
 .compose-body {
   display: block;
   width: 100%;
@@ -455,6 +470,18 @@ main.page-main {
   padding-top: 18px;
   border-top: 1px solid var(--rule);
 }
+.compose-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.compose-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-4);
+  letter-spacing: .02em;
+}
 .compose-error {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -479,6 +506,30 @@ main.page-main {
 .send-btn:hover { background: var(--ink-2); }
 .send-btn:disabled { opacity: .4; cursor: not-allowed; }
 .send-btn svg { display: block; }
+
+/* Reader footer: a single flat "reply" affordance under the message body. */
+.reader-actions {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.reply-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-2);
+  background: none;
+  border: 1px solid var(--rule-2);
+  border-radius: 999px;
+  padding: 8px 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.reply-btn:hover { color: var(--ink); border-color: var(--ink-4); }
+.reply-btn svg { display: block; }
 
 /* === Footer ============================================================== */
 .site-footer {

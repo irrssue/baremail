@@ -18,7 +18,7 @@ where and why.
 - Token store: disk-backed (`sessions.json`), atomic + owner-only (0600), debounced writes
 - Auth: `x-session-token` header (same as Node)
 - Single origin: the Go server also serves the built `baremail-app/dist`
-- Tests: `go test ./...` → **29 tests**, all green
+- Tests: `go test ./...` → **34 tests**, all green
 - Deploy: `deploy.sh` cross-compiles linux/amd64 and re-points pm2 at the binary
 
 ---
@@ -29,7 +29,7 @@ where and why.
 |------|-----|----------------|
 | `main.go` | 390 | HTTP routes, OAuth config, CORS, auth middleware, static + SPA fallback, email handlers |
 | `gmail.go` | 168 | Email structs, From-header parse, MIME body walk, relative-time + timestamp formatting, base64 decode |
-| `send.go` | 135 | `POST /api/send`: recipient parse/validate, RFC 2822 MIME build (RFC 2047 subject), Gmail send, scope-403 mapping |
+| `send.go` | 235 | `POST /api/send`: recipient parse/validate (To/Cc/Bcc), Markdown→HTML render, multipart/alternative build, reply threading (In-Reply-To/References + ThreadId), Gmail send, scope-403 mapping |
 | `sessions.go` | 131 | Disk-backed token store: load / get / set / delete / debounced atomic flush, file-perm hardening |
 | `googletoken.go` | 104 | Token JSON in `googleapis` wire shape (`expiry_date` millis) so the old Node `sessions.json` still loads |
 | `dotenv.go` | 60 | Minimal `.env` loader (stand-in for Node's dotenv) |
@@ -52,7 +52,7 @@ Every route, method, and JSON shape matches the old Express server exactly.
 | GET | `/auth/logout` | header | `{"ok": true}` (deletes the session) |
 | GET | `/api/emails?pageToken=` | **required** | `{"emails":[…], "nextPageToken": string\|null}` |
 | GET | `/api/emails/:id` | **required** | full email (see below) |
-| POST | `/api/send` | **required** | `{to,subject,body}` → `{"id": <sent msg id>}`; `403` if session lacks send scope |
+| POST | `/api/send` | **required** | `{to,cc,bcc,subject,body,inReplyTo,threadId}` → `{"id","threadId"}`; body is Markdown; `403` if session lacks send scope |
 | GET | `/*` (non-api/auth) | — | static file, else `index.html` (SPA fallback) |
 
 **Auth**: `x-session-token: <hex>` header. Missing/unknown → `401 {"error":"Not authenticated"}`.
@@ -68,10 +68,11 @@ Every route, method, and JSON shape matches the old Express server exactly.
 
 **`/api/emails/:id`** (`emailFull`):
 ```json
-{ "id","name","sender","subject","to","body","bodyHtml","snippet" }
+{ "id","threadId","messageId","references","name","sender","subject","to","body","bodyHtml","snippet" }
 ```
 - `body` = first `text/plain` part, `bodyHtml` = first `text/html` part (MIME tree walked depth-first)
 - GitHub-style notifications carry the rich card in `bodyHtml`; the frontend prefers it, falls back to `body`
+- `threadId` (Gmail), `messageId` (`Message-ID` header), `references` (`References` header) feed a threaded reply via `/api/send`
 
 ---
 
@@ -149,10 +150,21 @@ calls with a 403 (insufficient scope). `handleSend` detects that
 sign in again" message, so the frontend can prompt re-auth instead of showing a
 generic failure. New logins get both scopes in one consent screen.
 
-The wire body is plain-text only: `buildMIME` writes To / Subject (RFC 2047
-encoded-word so non-ASCII subjects survive) / `text/plain; charset=UTF-8`, CRLF
-line endings, and lets Gmail fill From / Date / Message-ID. Recipients go
-through `net/mail.ParseAddressList` (comma-separated, each validated).
+**Message shape** (`buildMIME`): a `multipart/alternative` with the Markdown
+source as `text/plain` and its goldmark-rendered HTML as `text/html`. Subject is
+RFC 2047 encoded-word wrapped (non-ASCII survives); Gmail fills
+From / Date / Message-ID. To/Cc/Bcc each go through `net/mail.ParseAddressList`
+(comma-separated, each validated; Cc/Bcc optional). **Bcc** rides in the header —
+Gmail delivers to those recipients and strips the header from every delivered
+copy. Markdown uses goldmark + the GFM extension (tables, strikethrough,
+autolinks, task lists). goldmark output is **not** sanitized, which is fine: the
+HTML is rendered from the sender's *own* Markdown, not untrusted input.
+
+**Reply threading**: when `inReplyTo` is set, `buildMIME` emits `In-Reply-To` and
+seeds `References` with the parent Message-ID (we don't carry the full chain
+server-side — enough for Gmail/most clients to thread). The request's `threadId`
+is set on the `gmail.Message` so Gmail attaches the reply to the right
+conversation. The frontend gets `messageId`/`threadId` from `/api/emails/:id`.
 
 ### 7. Relative-time formatting parity
 Go's `time` reference-time layout reproduces the JS `toLocaleTimeString` /
@@ -166,7 +178,7 @@ headers use and strips trailing `(UTC)`-style comments.
 
 ```bash
 cd server && go run .          # :3001 (API + serves built frontend)
-cd server && go test ./...     # 29 unit + interop tests
+cd server && go test ./...     # 34 unit + interop tests
 cd server && go vet ./...
 ```
 Needs Go 1.26+. Reads `server/.env` from the working dir.
@@ -216,21 +228,25 @@ A 502 during pm2 restart is normal (tunnel reconnect); the script retries.
 Direct:
 - `google.golang.org/api/gmail/v1` — Gmail REST client
 - `google.golang.org/api/option` — client options (token source)
+- `google.golang.org/api/googleapi` — typed API errors (scope-403 detection on send)
 - `golang.org/x/oauth2` (+ `/google`) — OAuth2 flow + token refresh
+- `github.com/yuin/goldmark` (+ `/extension`) — Markdown→HTML for outgoing mail (GFM)
 
 Everything else in `go.mod` is `// indirect` (transitive: cloud auth, otel,
 grpc, protobuf, x/net, x/crypto…). No external web framework, no external dotenv.
 
 ---
 
-## Test inventory (`go test ./...` → 29)
+## Test inventory (`go test ./...` → 34)
 
 - **gmail_test.go** — `splitFrom`, `headerValue`, `hasLabel`, `relTime` (same-day /
   other-day / empty / garbage), `tsOf`, `walkBody` (first-of-each / nested),
   summary + full JSON key shapes
-- **send_test.go** — `parseRecipients` (single / list / display-name / blank /
-  garbage), `buildMIME` (header shape + no bare LF), non-ASCII subject is RFC 2047
-  encoded, `normalizeCRLF`
+- **send_test.go** — `parseRecipients` + `parseOptionalRecipients` (single / list /
+  display-name / blank / garbage), `buildMIME` multipart (plain keeps Markdown,
+  html is rendered, no bare LF), Cc/Bcc present + omitted-when-empty, reply
+  headers present + absent-when-fresh, non-ASCII subject RFC 2047 encoded,
+  `normalizeCRLF`
 - **server_test.go** — store persist+reload (0600 check), delete, token merge
   (keeps refresh / nil old), `/auth/status`, `/auth/logout`, requireAuth rejects
   missing token, CORS preflight, SPA fallback, traversal guard, random token

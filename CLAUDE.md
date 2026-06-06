@@ -10,8 +10,9 @@ A bare, minimal email reader. Gmail OAuth → read-only inbox view. Nothing more
 ## Stack
 - Frontend: React 19, Vite 7, Tailwind v4 (`@tailwindcss/vite`)
 - Backend: **Go** (`net/http` std lib), `google.golang.org/api/gmail/v1` +
-  `golang.org/x/oauth2`. Disk-backed token store (`sessions.json`, atomic 0600
-  write), header-based token auth (`x-session-token`)
+  `golang.org/x/oauth2`, `github.com/yuin/goldmark` (Markdown→HTML on send).
+  Disk-backed token store (`sessions.json`, atomic 0600 write), header-based
+  token auth (`x-session-token`)
 - Single-origin deploy: the Go server serves the built `baremail-app/dist`
 
 ### Go backend layout (`/server`)
@@ -20,6 +21,7 @@ A bare, minimal email reader. Gmail OAuth → read-only inbox view. Nothing more
 - `googletoken.go` — token JSON in `googleapis` wire shape (`expiry_date` millis)
   so sessions written by the old Node server still load
 - `gmail.go` — header parse, MIME body walk, relative-time formatting
+- `send.go` — `/api/send`: recipient validation, Markdown render, multipart/alternative build, reply threading
 - `dotenv.go` — minimal `.env` loader (stands in for Node's dotenv)
 - `*_test.go` — unit + interop tests (`go test ./...`)
 
@@ -27,8 +29,11 @@ API contract (unchanged from the old Node server, byte-for-byte JSON):
 `GET /auth/google` · `/auth/google/callback?code=` → redirect `CLIENT_URL?token=` ·
 `/auth/status` → `{authenticated}` · `/auth/logout` → `{ok}` ·
 `/api/emails?pageToken=` → `{emails:[{id,name,sender,subject,snippet,date,ts,unread}],nextPageToken}` ·
-`/api/emails/:id` → `{id,name,sender,subject,to,body,bodyHtml,snippet}` ·
-`POST /api/send` `{to,subject,body}` → `{id}` (builds RFC 2822, Gmail sends; 403 if the session was consented before the send scope existed).
+`/api/emails/:id` → `{id,threadId,messageId,references,name,sender,subject,to,body,bodyHtml,snippet}` ·
+`POST /api/send` `{to,cc,bcc,subject,body,inReplyTo,threadId}` → `{id,threadId}`
+(body is **Markdown** → rendered server-side via goldmark into a
+`multipart/alternative` message; `inReplyTo`+`threadId` thread a reply; 403 if
+the session was consented before the send scope existed).
 OAuth scopes: `gmail.readonly` + `gmail.send`.
 Env: `PORT CLIENT_URL CLIENT_ID CLIENT_SECRET REDIRECT_URI STATIC_DIR SESSIONS_FILE`.
 

@@ -161,20 +161,28 @@ function HtmlBody({ html }) {
 }
 
 // Full-page compose view — a twin of the reader layout (820px column, serif
-// heading, mono From/To-style labels). Send POSTs { to, subject, body } to
-// /api/send; the backend builds the RFC 2822 message and hands it to Gmail.
-function Compose({ onClose }) {
-  const [to, setTo] = useState("")
-  const [subject, setSubject] = useState("")
+// heading, mono From/To-style labels). Send POSTs { to, cc, bcc, subject, body,
+// inReplyTo, threadId } to /api/send; the backend renders the Markdown body and
+// builds the RFC 2822 message. When `reply` is set the To/Subject are prefilled
+// and the message threads onto the original conversation.
+function Compose({ onClose, reply }) {
+  const [to, setTo] = useState(reply?.to || "")
+  const [cc, setCc] = useState("")
+  const [bcc, setBcc] = useState("")
+  const [subject, setSubject] = useState(reply?.subject || "")
   const [body, setBody] = useState("")
+  // Cc/Bcc fields stay hidden until asked for, keeping the form minimal.
+  const [showCc, setShowCc] = useState(false)
   const [status, setStatus] = useState("idle") // idle | sending | sent | error
   const [error, setError] = useState("")
   const toRef = useRef(null)
+  const bodyRef = useRef(null)
 
-  // Land focus in the To field when the view opens.
+  // Replies land focus in the body (recipient is known); new mail in To.
   useEffect(() => {
-    toRef.current?.focus()
-  }, [])
+    if (reply) bodyRef.current?.focus()
+    else toRef.current?.focus()
+  }, [reply])
 
   const canSend = to.trim() && body.trim() && status !== "sending"
 
@@ -185,7 +193,15 @@ function Compose({ onClose }) {
       const res = await fetch(`${API}/api/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ to, subject, body }),
+        body: JSON.stringify({
+          to,
+          cc,
+          bcc,
+          subject,
+          body,
+          inReplyTo: reply?.inReplyTo || "",
+          threadId: reply?.threadId || "",
+        }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -198,14 +214,22 @@ function Compose({ onClose }) {
       setStatus("error")
       setError(e.message)
     }
-  }, [to, subject, body, onClose])
+  }, [to, cc, bcc, subject, body, reply, onClose])
+
+  // Cmd/Ctrl+Enter sends from anywhere in the form.
+  const onFormKey = (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canSend) {
+      e.preventDefault()
+      send()
+    }
+  }
 
   return (
-    <article className="reader compose">
+    <article className="reader compose" onKeyDown={onFormKey}>
       <button className="crumb" onClick={onClose}>
         ← inbox
       </button>
-      <h1>New message</h1>
+      <h1>{reply ? "Reply" : "New message"}</h1>
       <div className="head">
         <div className="line">
           <label className="label" htmlFor="cmp-to">To</label>
@@ -219,7 +243,44 @@ function Compose({ onClose }) {
             spellCheck={false}
             autoComplete="off"
           />
+          {!showCc && (
+            <button
+              className="cc-toggle"
+              type="button"
+              onClick={() => setShowCc(true)}
+            >
+              Cc Bcc
+            </button>
+          )}
         </div>
+        {showCc && (
+          <>
+            <div className="line">
+              <label className="label" htmlFor="cmp-cc">Cc</label>
+              <input
+                id="cmp-cc"
+                className="compose-input"
+                value={cc}
+                onChange={(e) => setCc(e.target.value)}
+                placeholder="name@example.com"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+            <div className="line">
+              <label className="label" htmlFor="cmp-bcc">Bcc</label>
+              <input
+                id="cmp-bcc"
+                className="compose-input"
+                value={bcc}
+                onChange={(e) => setBcc(e.target.value)}
+                placeholder="name@example.com"
+                spellCheck={false}
+                autoComplete="off"
+              />
+            </div>
+          </>
+        )}
         <div className="line">
           <label className="label" htmlFor="cmp-subj">Subject</label>
           <input
@@ -234,13 +295,17 @@ function Compose({ onClose }) {
         </div>
       </div>
       <textarea
+        ref={bodyRef}
         className="compose-body"
         value={body}
         onChange={(e) => setBody(e.target.value)}
-        placeholder="Write your message…"
+        placeholder="Write your message…  *markdown* supported"
       />
       <div className="compose-actions">
-        {error && <span className="compose-error">{error}</span>}
+        <div className="compose-meta">
+          <span className="compose-hint">markdown · ⌘↵ to send</span>
+          {error && <span className="compose-error">{error}</span>}
+        </div>
         <button
           className="send-btn"
           type="button"
@@ -352,6 +417,8 @@ function App() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [query, setQuery] = useState("")
   const [composing, setComposing] = useState(false)
+  // When set, the compose view opens as a threaded reply (prefilled To/Subject).
+  const [replyCtx, setReplyCtx] = useState(null)
   const [activeIdx, setActiveIdx] = useState(-1)
   const sentinelRef = useRef(null)
   const tokenRef = useRef(null)
@@ -452,6 +519,7 @@ function App() {
     function onPop() {
       setSelected(null)
       setComposing(false)
+      setReplyCtx(null)
     }
     window.addEventListener("popstate", onPop)
     return () => window.removeEventListener("popstate", onPop)
@@ -467,11 +535,28 @@ function App() {
   // Open the full-page compose view. Push a history entry so Back / Esc returns
   // to the inbox, same as the reader.
   const openCompose = useCallback(() => {
+    setReplyCtx(null)
+    window.history.pushState({ bmCompose: true }, "")
+    setComposing(true)
+  }, [])
+
+  // Reply to the open email: build the prefill context (To = original sender,
+  // subject Re:-prefixed, threading headers from the message) and open compose.
+  const openReply = useCallback((email) => {
+    if (!email) return
+    const subj = email.subject || ""
+    setReplyCtx({
+      to: email.sender,
+      subject: /^re:/i.test(subj) ? subj : `Re: ${subj}`,
+      inReplyTo: email.messageId || "",
+      threadId: email.threadId || "",
+    })
     window.history.pushState({ bmCompose: true }, "")
     setComposing(true)
   }, [])
 
   const closeCompose = useCallback(() => {
+    setReplyCtx(null)
     if (window.history.state?.bmCompose) window.history.back()
     else setComposing(false)
   }, [])
@@ -502,6 +587,12 @@ function App() {
         else if (inSearch) searchInputRef.current?.blur()
         return
       }
+      // `r` replies to the open email.
+      if (e.key === "r" && selected && !composing && !inSearch) {
+        e.preventDefault()
+        openReply(selected)
+        return
+      }
       // List nav only on the inbox view, and not while typing a search.
       if (selected || composing || inSearch || emails.length === 0) return
       if (e.key === "j" || e.key === "ArrowDown") {
@@ -516,7 +607,7 @@ function App() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [selected, composing, emails, activeIdx, closeReader, closeCompose])
+  }, [selected, composing, emails, activeIdx, closeReader, closeCompose, openReply])
 
   // Keep the active row scrolled into view as the cursor moves.
   useEffect(() => {
@@ -562,7 +653,7 @@ function App() {
   if (composing) {
     return (
       <Shell onBrand={closeCompose}>
-        <Compose onClose={closeCompose} />
+        <Compose onClose={closeCompose} reply={replyCtx} />
       </Shell>
     )
   }
@@ -588,6 +679,15 @@ function App() {
           ) : (
             <div className="body">{selected.body || selected.snippet}</div>
           )}
+          <div className="reader-actions">
+            <button className="reply-btn" type="button" onClick={() => openReply(selected)}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="9 17 4 12 9 7" />
+                <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+              </svg>
+              reply
+            </button>
+          </div>
         </article>
       </Shell>
     )

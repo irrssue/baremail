@@ -284,14 +284,17 @@ func (s *server) handleEmailByID(w http.ResponseWriter, r *http.Request) {
 	walkBody(msg.Payload, &body, &html)
 
 	writeJSON(w, http.StatusOK, emailFull{
-		ID:       msg.Id,
-		Name:     name,
-		Sender:   sender,
-		Subject:  headerValue(headers, "Subject"),
-		To:       headerValue(headers, "To"),
-		Body:     body,
-		BodyHTML: html,
-		Snippet:  msg.Snippet,
+		ID:         msg.Id,
+		ThreadID:   msg.ThreadId,
+		MessageID:  headerValue(headers, "Message-ID"),
+		References: headerValue(headers, "References"),
+		Name:       name,
+		Sender:     sender,
+		Subject:    headerValue(headers, "Subject"),
+		To:         headerValue(headers, "To"),
+		Body:       body,
+		BodyHTML:   html,
+		Snippet:    msg.Snippet,
 	})
 }
 

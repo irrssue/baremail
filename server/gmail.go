@@ -24,15 +24,20 @@ type emailSummary struct {
 }
 
 // emailFull is the reader payload: serif subject, mono From/To head, prose body.
+// ThreadID + MessageID + References are carried so the frontend can open a
+// threaded reply (they feed /api/send's inReplyTo/references/threadId).
 type emailFull struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Sender   string `json:"sender"`
-	Subject  string `json:"subject"`
-	To       string `json:"to"`
-	Body     string `json:"body"`
-	BodyHTML string `json:"bodyHtml"`
-	Snippet  string `json:"snippet"`
+	ID         string `json:"id"`
+	ThreadID   string `json:"threadId"`
+	MessageID  string `json:"messageId"`
+	References string `json:"references"`
+	Name       string `json:"name"`
+	Sender     string `json:"sender"`
+	Subject    string `json:"subject"`
+	To         string `json:"to"`
+	Body       string `json:"body"`
+	BodyHTML   string `json:"bodyHtml"`
+	Snippet    string `json:"snippet"`
 }
 
 var fromRe = regexp.MustCompile(`^"?([^"<]*)"?\s*<(.+)>$`)

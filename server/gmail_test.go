@@ -149,10 +149,10 @@ func TestSummaryJSONShape(t *testing.T) {
 }
 
 func TestFullJSONShape(t *testing.T) {
-	b, _ := json.Marshal(emailFull{ID: "1", Name: "n", Sender: "s", Subject: "sub", To: "t", Body: "b", BodyHTML: "<p>", Snippet: "snip"})
+	b, _ := json.Marshal(emailFull{ID: "1", ThreadID: "t1", MessageID: "<m1>", References: "<r0>", Name: "n", Sender: "s", Subject: "sub", To: "t", Body: "b", BodyHTML: "<p>", Snippet: "snip"})
 	var m map[string]any
 	_ = json.Unmarshal(b, &m)
-	for _, k := range []string{"id", "name", "sender", "subject", "to", "body", "bodyHtml", "snippet"} {
+	for _, k := range []string{"id", "threadId", "messageId", "references", "name", "sender", "subject", "to", "body", "bodyHtml", "snippet"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("full JSON missing key %q (got %v)", k, m)
 		}
