@@ -160,13 +160,54 @@ function HtmlBody({ html }) {
   )
 }
 
-function Shell({ children, onBrand, onSignOut }) {
+function Shell({ children, onBrand, onSignOut, search }) {
   return (
     <>
       <header className="topbar">
         <button className="brand" onClick={onBrand}>
           baremail
         </button>
+        {search && (
+          <div className="search">
+            <div className="search-box">
+              <svg
+                className="icon"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="11" cy="11" r="7" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                ref={search.inputRef}
+                value={search.value}
+                onChange={(e) => search.onChange(e.target.value)}
+                onKeyDown={search.onKeyDown}
+                placeholder="search mail…"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              {search.value ? (
+                <button
+                  className="clear"
+                  onClick={search.onClear}
+                  aria-label="clear search"
+                >
+                  ✕
+                </button>
+              ) : (
+                <span className="slash">/</span>
+              )}
+            </div>
+          </div>
+        )}
         {onSignOut && (
           <div className="right">
             <button className="signout-btn" onClick={onSignOut}>
@@ -199,9 +240,14 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [nextPageToken, setNextPageToken] = useState(null)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [query, setQuery] = useState("")
+  const [activeIdx, setActiveIdx] = useState(-1)
   const sentinelRef = useRef(null)
   const tokenRef = useRef(null)
   const loadingMoreRef = useRef(false)
+  const queryRef = useRef("")
+  const searchInputRef = useRef(null)
+  const rowRefs = useRef([])
 
   useEffect(() => {
     // Pick up token from URL after OAuth redirect
@@ -216,20 +262,27 @@ function App() {
       .then((r) => r.json())
       .then((data) => {
         setAuthenticated(data.authenticated)
-        if (data.authenticated) loadEmails()
-        else setLoading(false)
+        // When authenticated, the search effect performs the initial load
+        // (empty query → plain inbox) once `authenticated` flips true.
+        if (!data.authenticated) setLoading(false)
       })
       .catch(() => setLoading(false))
   }, [])
 
-  function loadEmails() {
+  function loadEmails(q = "") {
     setLoading(true)
-    fetch(`${API}/api/emails`, { headers: authHeaders() })
+    queryRef.current = q
+    const qs = q ? `?q=${encodeURIComponent(q)}` : ""
+    fetch(`${API}/api/emails${qs}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => {
+        // A stale response from a superseded query (user kept typing) must not
+        // clobber the current results.
+        if (queryRef.current !== q) return
         setEmails(data.emails || [])
         setNextPageToken(data.nextPageToken || null)
         tokenRef.current = data.nextPageToken || null
+        setActiveIdx(-1)
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -240,7 +293,9 @@ function App() {
     if (!token || loadingMoreRef.current) return
     loadingMoreRef.current = true
     setLoadingMore(true)
-    fetch(`${API}/api/emails?pageToken=${encodeURIComponent(token)}`, {
+    const q = queryRef.current
+    const qs = q ? `&q=${encodeURIComponent(q)}` : ""
+    fetch(`${API}/api/emails?pageToken=${encodeURIComponent(token)}${qs}`, {
       headers: authHeaders(),
     })
       .then((r) => r.json())
@@ -295,6 +350,52 @@ function App() {
     else setSelected(null)
   }, [])
 
+  // Debounced search: refetch the inbox 250ms after typing stops. An empty
+  // query falls back to the plain inbox list. Only runs while authenticated.
+  useEffect(() => {
+    if (!authenticated) return
+    const id = setTimeout(() => loadEmails(query.trim()), 250)
+    return () => clearTimeout(id)
+  }, [query, authenticated])
+
+  // Keyboard nav. `/` focuses search from anywhere; j/k move the list cursor;
+  // Enter opens the active row; Esc closes the reader or blurs/clears search.
+  // Typing keys are ignored while focus is in the search input (except Esc).
+  useEffect(() => {
+    function onKey(e) {
+      const inSearch = document.activeElement === searchInputRef.current
+      // `/` jumps to search unless already typing in a field.
+      if (e.key === "/" && !inSearch) {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+        return
+      }
+      if (e.key === "Escape") {
+        if (selected) closeReader()
+        else if (inSearch) searchInputRef.current?.blur()
+        return
+      }
+      // List nav only on the inbox view, and not while typing a search.
+      if (selected || inSearch || emails.length === 0) return
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault()
+        setActiveIdx((i) => Math.min(i + 1, emails.length - 1))
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault()
+        setActiveIdx((i) => Math.max(i - 1, 0))
+      } else if (e.key === "Enter") {
+        if (activeIdx >= 0 && emails[activeIdx]) openEmail(emails[activeIdx])
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [selected, emails, activeIdx, closeReader])
+
+  // Keep the active row scrolled into view as the cursor moves.
+  useEffect(() => {
+    if (activeIdx >= 0) rowRefs.current[activeIdx]?.scrollIntoView({ block: "nearest" })
+  }, [activeIdx])
+
   function signOut() {
     fetch(`${API}/auth/logout`, { headers: authHeaders() }).then(() => {
       localStorage.removeItem("bm_token")
@@ -303,7 +404,24 @@ function App() {
       setSelected(null)
       setNextPageToken(null)
       tokenRef.current = null
+      setQuery("")
+      queryRef.current = ""
+      setActiveIdx(-1)
     })
+  }
+
+  // Props for the centered search box in the topbar.
+  const searchProps = {
+    value: query,
+    onChange: setQuery,
+    onClear: () => {
+      setQuery("")
+      searchInputRef.current?.focus()
+    },
+    onKeyDown: (e) => {
+      if (e.key === "Enter") searchInputRef.current?.blur()
+    },
+    inputRef: searchInputRef,
   }
 
   if (loading) {
@@ -354,19 +472,30 @@ function App() {
     )
   }
 
+  // Map each email id to its flat index so keyboard nav (which works off the
+  // flat list) can mark the right row active inside the day-grouped render.
+  const flatIndex = new Map(emails.map((e, i) => [e.id, i]))
+
   return (
-    <Shell onBrand={() => setSelected(null)} onSignOut={signOut}>
+    <Shell onBrand={() => setSelected(null)} onSignOut={signOut} search={searchProps}>
       {emails.length === 0 ? (
-        <div className="empty">Inbox empty.</div>
+        <div className="empty">
+          {queryRef.current ? "No matches." : "Inbox empty."}
+        </div>
       ) : (
         <div className="maillist">
           {groupByDay(emails).map((group) => (
             <section key={group.label} className="daygroup">
               <div className="day-sep">{group.label}</div>
-              {group.items.map((email) => (
+              {group.items.map((email) => {
+                const idx = flatIndex.get(email.id)
+                return (
                 <div
                   key={email.id}
-                  className={`mailrow ${email.unread ? "is-unread" : "is-read"}`}
+                  ref={(el) => (rowRefs.current[idx] = el)}
+                  className={`mailrow ${email.unread ? "is-unread" : "is-read"}${
+                    idx === activeIdx ? " is-active" : ""
+                  }`}
                   onClick={() => openEmail(email)}
                 >
                   <span className="who">{email.name}</span>
@@ -378,7 +507,8 @@ function App() {
                   </span>
                   {email.date && <span className="when">{email.date}</span>}
                 </div>
-              ))}
+                )
+              })}
             </section>
           ))}
           {nextPageToken && (

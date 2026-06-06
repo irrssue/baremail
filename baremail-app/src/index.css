@@ -90,8 +90,74 @@ a { color: inherit; text-decoration: none; }
 }
 .signout-btn:hover { background: var(--bg-2); border-color: var(--ink-4); color: var(--ink); }
 
+/* Center search. Brand and right cluster keep natural width; the search
+   takes the middle and is itself capped + centered so it tracks the 820px
+   content column rather than sprawling edge-to-edge on wide screens. */
+.topbar .search {
+  flex: 1 1 auto;
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 440px;
+  padding: 8px 13px;
+  background: var(--bg-2);
+  border: 1px solid var(--rule-2);
+  border-radius: 999px;
+  transition: border-color .15s;
+}
+.search-box:focus-within { border-color: var(--ink-4); }
+.search-box .icon { color: var(--ink-3); flex: 0 0 auto; }
+.search-box input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1;
+}
+.search-box input::placeholder { color: var(--ink-3); }
+.search-box .clear {
+  flex: 0 0 auto;
+  border: 0;
+  background: none;
+  color: var(--ink-3);
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+}
+.search-box .clear:hover { color: var(--ink); }
+/* `/` hint pill on the right of the box, hidden once focused/typing. */
+.search-box .slash {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-4);
+  border: 1px solid var(--rule-2);
+  border-radius: 5px;
+  padding: 2px 5px;
+  line-height: 1;
+}
+/* Selected list row under keyboard nav. */
+.mailrow.is-active {
+  background: var(--bg-2);
+  box-shadow: inset 2px 0 0 var(--hot);
+}
+
 @media (max-width: 600px) {
-  .topbar { padding: 14px 20px; }
+  .topbar { padding: 14px 20px; column-gap: 14px; }
+  .search-box { padding: 7px 11px; }
+  .search-box .slash { display: none; }
 }
 
 /* === Page shell ========================================================== */

@@ -187,6 +187,11 @@ func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
 	if pt := r.URL.Query().Get("pageToken"); pt != "" {
 		call = call.PageToken(pt)
 	}
+	// Optional Gmail search. Passed straight through as the Gmail `q` query
+	// (supports the full operator set: from:, subject:, is:unread, etc.).
+	if q := r.URL.Query().Get("q"); q != "" {
+		call = call.Q(q)
+	}
 	list, err := call.Do()
 	if err != nil {
 		log.Printf("Fetch emails error: %v", err)
