@@ -4,13 +4,31 @@ A bare, minimal email reader. Gmail OAuth → read-only inbox view. Nothing more
 
 ## Structure
 - `/baremail-app`: Vite + React 19 frontend (Tailwind v4 + hand-written design system)
-- `/server`: Express backend — Google OAuth, Gmail API proxy, serves built frontend
+- `/server`: **Go** backend — Google OAuth, Gmail API proxy, serves built frontend
 - `/PRIVACY`: privacy policy assets
 
 ## Stack
 - Frontend: React 19, Vite 7, Tailwind v4 (`@tailwindcss/vite`)
-- Backend: Express, `googleapis`, in-memory token store, header-based token auth (`x-session-token`)
-- Single-origin deploy: Express serves the built `baremail-app/dist`
+- Backend: **Go** (`net/http` std lib), `google.golang.org/api/gmail/v1` +
+  `golang.org/x/oauth2`. Disk-backed token store (`sessions.json`, atomic 0600
+  write), header-based token auth (`x-session-token`)
+- Single-origin deploy: the Go server serves the built `baremail-app/dist`
+
+### Go backend layout (`/server`)
+- `main.go` — HTTP routes, OAuth config, CORS, static + SPA fallback
+- `sessions.go` — disk-backed token store (debounced atomic write, owner-only)
+- `googletoken.go` — token JSON in `googleapis` wire shape (`expiry_date` millis)
+  so sessions written by the old Node server still load
+- `gmail.go` — header parse, MIME body walk, relative-time formatting
+- `dotenv.go` — minimal `.env` loader (stands in for Node's dotenv)
+- `*_test.go` — unit + interop tests (`go test ./...`)
+
+API contract (unchanged from the old Node server, byte-for-byte JSON):
+`GET /auth/google` · `/auth/google/callback?code=` → redirect `CLIENT_URL?token=` ·
+`/auth/status` → `{authenticated}` · `/auth/logout` → `{ok}` ·
+`/api/emails?pageToken=` → `{emails:[{id,name,sender,subject,snippet,date,ts,unread}],nextPageToken}` ·
+`/api/emails/:id` → `{id,name,sender,subject,to,body,bodyHtml,snippet}`.
+Env: `PORT CLIENT_URL CLIENT_ID CLIENT_SECRET REDIRECT_URI STATIC_DIR SESSIONS_FILE`.
 
 ## Design system
 
@@ -39,10 +57,13 @@ mono From/To head, prose body. Mobile breakpoint at 600px.
 
 ## Dev
 ```
-cd server && npm start          # :3001 (API + serves built frontend)
+cd server && go run .           # :3001 (API + serves built frontend)
+cd server && go test ./...      # unit + interop tests
 cd baremail-app && npm run dev  # :5173 (Vite, proxies /api + /auth to :3001)
 cd baremail-app && npm run build
 ```
+The Go server reads `server/.env` from its working dir (same vars the Node
+server used). Requires Go 1.26+.
 
 ## Deploy
 
@@ -50,14 +71,20 @@ Self-hosted on the homelab — **not Vercel**. Routing:
 
 ```
 mail.irrssue.com → cloudflare tunnel → homelab localhost:3003
-  → pm2 process "baremail" → server/index.js, STATIC_DIR=~/baremail/dist
+  → pm2 process "baremail" → Go binary (~/baremail/server/baremail),
+    cwd ~/baremail/server, STATIC_DIR=~/baremail/dist
 ```
 
-The homelab (`ssh irrssue@homelab`, dir `~/baremail`) is **not a git checkout**
-and has no auto-pull. After any frontend or server change, deploy with:
+The homelab is **linux/amd64**, so `deploy.sh` cross-compiles the Go backend
+(`GOOS=linux GOARCH=amd64`). The homelab (`ssh irrssue@homelab`, dir `~/baremail`)
+is **not a git checkout** and has no auto-pull — it does not need Go installed,
+only the compiled binary. `server/.env` and `server/sessions.json` live on the
+homelab (gitignored); the binary runs with cwd `~/baremail/server` so it finds
+both. After any frontend or server change, deploy with:
 
 ```
-./deploy.sh   # build → rsync dist + scp server/index.js → pm2 restart → verify
+./deploy.sh   # build frontend → cross-compile Go → rsync dist + binary
+              # → pm2 (re)start on the binary → verify asset + API
 ```
 
 A 502 during the pm2 restart is normal (tunnel reconnect); the script retries.

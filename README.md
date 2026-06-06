@@ -14,13 +14,13 @@ Baremail connects to your Gmail account via Google OAuth and presents your inbox
 ## Tech stack
 
 - **Frontend**: React + Vite + Tailwind CSS
-- **Backend**: Node.js + Express
+- **Backend**: Go (standard-library `net/http`)
 - **Auth**: Google OAuth2
 - **API**: Gmail API (read-only)
 
 ## Running locally
 
-**Prerequisites**: Node.js, a Google Cloud project with Gmail API enabled, and OAuth2 credentials.
+**Prerequisites**: Go 1.26+, Node.js (for the frontend), a Google Cloud project with Gmail API enabled, and OAuth2 credentials.
 
 1. Clone the repo
 2. Create a `.env` file in `/server` with your credentials:
@@ -28,10 +28,10 @@ Baremail connects to your Gmail account via Google OAuth and presents your inbox
    CLIENT_ID=your_google_client_id
    CLIENT_SECRET=your_google_client_secret
    ```
-3. Install dependencies and start both servers:
+3. Start both servers:
    ```bash
    # Backend
-   cd server && npm install && node index.js
+   cd server && go run .
 
    # Frontend (new terminal)
    cd baremail-app && npm install && npm run dev

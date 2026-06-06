@@ -3,3 +3,7 @@ node_modules
 .DS_Store
 sessions.json
 server/sessions.json
+
+# Go build output (the compiled backend binary, built by deploy.sh)
+server/baremail
+server/baremail-linux-amd64
