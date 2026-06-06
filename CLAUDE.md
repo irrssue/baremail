@@ -62,6 +62,10 @@ and has no auto-pull. After any frontend or server change, deploy with:
 
 A 502 during the pm2 restart is normal (tunnel reconnect); the script retries.
 
+**Ship live after every change.** Once a frontend or server change is committed
+and pushed, run `./deploy.sh` to push it to the homelab. A commit is not done
+until it is live at mail.irrssue.com. Never finish a task without deploying.
+
 ## Contact
 Any public-facing contact email (footer, privacy, docs) must be `liam@irrssue.com`.
 
