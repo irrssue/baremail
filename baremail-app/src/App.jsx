@@ -125,8 +125,14 @@ function HtmlBody({ html }) {
 
   useEffect(() => {
     function onMsg(e) {
+      // The email runs in an opaque-origin sandbox, so it can postMessage
+      // arbitrary payloads. Only trust a height message that actually came
+      // from THIS iframe's window and is a plain positive number.
+      if (e.source !== ref.current?.contentWindow) return
       const h = e.data && e.data.__bmHeight
-      if (typeof h === "number" && h > 0) setHeight(h)
+      if (typeof h === "number" && isFinite(h) && h > 0 && h < 100000) {
+        setHeight(h)
+      }
     }
     window.addEventListener("message", onMsg)
     return () => window.removeEventListener("message", onMsg)
@@ -138,7 +144,7 @@ function HtmlBody({ html }) {
       className="body-html"
       title="email"
       scrolling="no"
-      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+      sandbox="allow-scripts allow-popups"
       srcDoc={srcDoc}
       style={{ height: `${height}px` }}
     />
