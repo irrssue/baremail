@@ -67,53 +67,46 @@ function HtmlBody({ html }) {
   const ref = useRef(null)
   const [height, setHeight] = useState(240)
 
-  // Self-sizing wrapper. The email is forced onto baremail's dark surface like
-  // twobird: any white / near-white background the sender hardcoded (inline or
-  // via attribute) is stripped to transparent so the dark page shows through,
-  // and default text is lit. Logos and photos are left untouched. Height is
-  // reported up via postMessage so the parent sizes the iframe to exact content
-  // (no inner scroll). We must NOT clip overflow here — clipping collapses
-  // scrollHeight and the body gets cut off.
+  // Force the email onto baremail's dark surface with full color inversion —
+  // the same technique Outlook / Windows Mail use to force-dark email. A single
+  // `filter: invert(1) hue-rotate(180deg)` on the root flips every light surface
+  // dark regardless of how the sender set it (inline style, bgcolor attribute,
+  // embedded <style>, or !important), so there is no white background to chase.
+  // Media that already carries true colors (images, video, canvas, svg, and any
+  // element painted with a background-image) is inverted a second time so it
+  // renders as designed. Height is reported up via postMessage so the parent
+  // sizes the iframe to exact content; we never clip overflow (that collapses
+  // scrollHeight and cuts the body off).
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
 <base target="_blank">
 <style>
-  html,body{margin:0;padding:0;background:#1a1a1a;color:#f3f3f1;
+  html{filter:invert(1) hue-rotate(180deg);background:#1a1a1a;}
+  html,body{margin:0;padding:0;background:#1a1a1a;
     font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
   body{padding:0;overflow-x:hidden;word-break:break-word;
     -webkit-font-smoothing:antialiased;}
+  /* Re-invert real media so photos and logos keep their true colors. The
+     [data-bm-bgimg] hook is added in JS for elements painted via background-image. */
+  img,video,canvas,svg,picture,image,[data-bm-bgimg]{
+    filter:invert(1) hue-rotate(180deg);
+  }
   img{max-width:100%;height:auto;}
-  a{color:#b89a6a;}
 </style></head>
 <body>${html}
 <script>
-  // A background counts as "white-ish" if all RGB channels are high. Strip it
-  // to transparent so the page's dark surface shows through.
-  function isLight(c){
-    if(!c) return false;
-    var m=c.match(/rgba?\\(([^)]+)\\)/); if(!m) return false;
-    var p=m[1].split(",").map(function(x){return parseFloat(x)});
-    if(p.length>=4 && p[3]===0) return false;            // already transparent
-    return p[0]>225 && p[1]>225 && p[2]>225;
-  }
-  function darken(){
+  // Tag any element that paints a real background-image so it gets re-inverted
+  // back to its true colors (the root filter would otherwise negate it).
+  function markBgImages(){
     var els=document.querySelectorAll("body *");
     for(var i=0;i<els.length;i++){
       try{
-        var el=els[i];
-        var cs=getComputedStyle(el);
-        if(isLight(cs.backgroundColor)) el.style.setProperty("background-color","transparent","important");
-        if(el.hasAttribute&&el.hasAttribute("bgcolor")){
-          var bg=(el.getAttribute("bgcolor")||"").replace("#","").toLowerCase();
-          if(bg==="ffffff"||bg==="fff"||/^(f|e)/.test(bg)) el.style.setProperty("background-color","transparent","important");
-        }
-        // Lift near-black text so it stays readable on the dark surface.
-        var t=cs.color&&cs.color.match(/\\d+/g);
-        if(t&&+t[0]<90&&+t[1]<90&&+t[2]<90) el.style.setProperty("color","#e8e8e6","important");
+        var bi=getComputedStyle(els[i]).backgroundImage;
+        if(bi && bi!=="none" && bi.indexOf("url(")!==-1) els[i].setAttribute("data-bm-bgimg","");
       }catch(e){}
     }
   }
   function report(){parent.postMessage({__bmHeight:document.body.scrollHeight},"*");}
-  function pass(){darken();report();}
+  function pass(){markBgImages();report();}
   window.addEventListener("load",pass);
   window.addEventListener("resize",report);
   new ResizeObserver(report).observe(document.body);
