@@ -221,10 +221,29 @@ function App() {
   }, [loadMore, emails.length, nextPageToken])
 
   function openEmail(email) {
+    // Push a history entry so the browser Back button returns to the inbox
+    // (this in-app view) instead of unwinding past the app to the OAuth login.
+    window.history.pushState({ bmReader: true }, "")
     fetch(`${API}/api/emails/${email.id}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => setSelected(data))
   }
+
+  // Back button while reading: close the reader instead of leaving the app.
+  useEffect(() => {
+    function onPop() {
+      setSelected(null)
+    }
+    window.addEventListener("popstate", onPop)
+    return () => window.removeEventListener("popstate", onPop)
+  }, [])
+
+  // Closing the reader via an in-app control (← inbox, brand). Walk the
+  // history entry back so the Back button doesn't have a stale reader step.
+  const closeReader = useCallback(() => {
+    if (window.history.state?.bmReader) window.history.back()
+    else setSelected(null)
+  }, [])
 
   function signOut() {
     fetch(`${API}/auth/logout`, { headers: authHeaders() }).then(() => {
@@ -261,9 +280,9 @@ function App() {
 
   if (selected) {
     return (
-      <Shell onBrand={() => setSelected(null)} onSignOut={signOut}>
+      <Shell onBrand={closeReader} onSignOut={signOut}>
         <article className="reader">
-          <button className="crumb" onClick={() => setSelected(null)}>
+          <button className="crumb" onClick={closeReader}>
             ← inbox
           </button>
           <h1>{selected.subject || "(no subject)"}</h1>
