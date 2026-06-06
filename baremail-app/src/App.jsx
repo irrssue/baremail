@@ -67,11 +67,13 @@ function HtmlBody({ html }) {
   const ref = useRef(null)
   const [height, setHeight] = useState(240)
 
-  // Force the email onto baremail's dark surface with full color inversion —
-  // the same technique Outlook / Windows Mail use to force-dark email. A single
-  // `filter: invert(1) hue-rotate(180deg)` on the root flips every light surface
-  // dark regardless of how the sender set it (inline style, bgcolor attribute,
-  // embedded <style>, or !important), so there is no white background to chase.
+  // Force the email dark with full color inversion — the same technique Outlook /
+  // Windows Mail use to force-dark email. A single `filter: invert(1)
+  // hue-rotate(180deg)` on the root flips every light surface dark regardless of
+  // how the sender set it (inline style, bgcolor attribute, embedded <style>, or
+  // !important), so there is no white background to chase. The html/body
+  // backgrounds are left transparent so baremail's own page bg (--bg) shows
+  // through behind the mail rather than a solid dark block.
   // Media that already carries true colors (images, video, canvas, svg, and any
   // element painted with a background-image) is inverted a second time so it
   // renders as designed. Height is reported up via postMessage so the parent
@@ -80,8 +82,8 @@ function HtmlBody({ html }) {
   const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
 <base target="_blank">
 <style>
-  html{filter:invert(1) hue-rotate(180deg);background:#1a1a1a;}
-  html,body{margin:0;padding:0;background:#1a1a1a;
+  html{filter:invert(1) hue-rotate(180deg);background:transparent;}
+  html,body{margin:0;padding:0;background:transparent;
     font-family:'Inter',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
   body{padding:0;overflow-x:hidden;word-break:break-word;
     -webkit-font-smoothing:antialiased;}
