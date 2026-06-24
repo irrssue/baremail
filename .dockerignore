@@ -1,0 +1,9 @@
+.git
+**/node_modules
+baremail-app/dist
+server/baremail
+server/baremail-linux-amd64
+server/sessions.json
+server/.env
+data
+**/.DS_Store

@@ -81,27 +81,35 @@ server used). Requires Go 1.26+.
 
 ## Deploy
 
-Self-hosted on the homelab — **not Vercel**. Routing:
+Self-hosted on the homelab as a **Docker container** — **not Vercel**. Routing:
 
 ```
 mail.irrssue.com → cloudflare tunnel → homelab localhost:3003
-  → pm2 process "baremail" → Go binary (~/baremail/server/baremail),
-    cwd ~/baremail/server, STATIC_DIR=~/baremail/dist
+  → baremail Docker container (published 127.0.0.1:3003->3003)
+    → Go binary, STATIC_DIR=/app/dist, SESSIONS_FILE=/data/sessions.json
 ```
 
-The homelab is **linux/amd64**, so `deploy.sh` cross-compiles the Go backend
-(`GOOS=linux GOARCH=amd64`). The homelab (`ssh irrssue@homelab`, dir `~/baremail`)
-is **not a git checkout** and has no auto-pull — it does not need Go installed,
-only the compiled binary. `server/.env` and `server/sessions.json` live on the
-homelab (gitignored); the binary runs with cwd `~/baremail/server` so it finds
-both. After any frontend or server change, deploy with:
+The image is a **multi-stage build** (`Dockerfile`): Node builds the frontend,
+golang compiles the backend, both land in a tiny Alpine runtime. It is built
+**on the homelab** (`docker compose up -d --build`), so the homelab needs only
+Docker — no Go or Node toolchain, and the dev Mac needs no Go to deploy.
+
+The homelab (`ssh irrssue@homelab`, dir `~/baremail`) is **not a git checkout**
+and has no auto-pull. `server/.env` (OAuth secrets + `PORT=3003`) lives there
+gitignored and is wired in via `compose.yaml`'s `env_file`; `compose.yaml`
+overrides `STATIC_DIR`/`SESSIONS_FILE`/`PORT` for the in-container paths. The
+token store persists on the `~/baremail/data` bind-mount volume
+(`data/sessions.json`), seeded once from the old `server/sessions.json`. After
+any frontend or server change, deploy with:
 
 ```
-./deploy.sh   # build frontend → cross-compile Go → rsync dist + binary
-              # → pm2 (re)start on the binary → verify asset + API
+./deploy.sh   # rsync source → docker compose up -d --build on the homelab
+              # → retire old pm2 process → verify API + served asset
 ```
 
-A 502 during the pm2 restart is normal (tunnel reconnect); the script retries.
+A 502 during the container restart is normal (tunnel reconnect); the script
+retries. The container runs `restart: unless-stopped` with a `/auth/status`
+healthcheck.
 
 **Ship live after every change.** Once a frontend or server change is committed
 and pushed, run `./deploy.sh` to push it to the homelab. A commit is not done

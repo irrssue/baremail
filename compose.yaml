@@ -1,0 +1,29 @@
+services:
+  baremail:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: baremail:latest
+    container_name: baremail
+    restart: unless-stopped
+    # Secrets + OAuth config (CLIENT_ID/SECRET/URL, REDIRECT_URI, PORT) come from
+    # the gitignored server/.env that already lives on the homelab.
+    env_file:
+      - ./server/.env
+    # These win over anything in .env: the in-container paths differ from the
+    # old pm2 host paths (STATIC_DIR pointed at ~/baremail/dist on the host).
+    environment:
+      STATIC_DIR: /app/dist
+      SESSIONS_FILE: /data/sessions.json
+      PORT: "3003"
+    # Bind only to loopback — the cloudflare tunnel reaches it via localhost:3003.
+    # Long-form syntax (the short "127.0.0.1:3003:3003" form dropped `published`
+    # on Compose v5).
+    ports:
+      - target: 3003
+        host_ip: 127.0.0.1
+        published: "3003"
+        protocol: tcp
+    # Persist the disk-backed token store across rebuilds/restarts.
+    volumes:
+      - ./data:/data

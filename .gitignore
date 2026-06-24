@@ -7,3 +7,6 @@ server/sessions.json
 # Go build output (the compiled backend binary, built by deploy.sh)
 server/baremail
 server/baremail-linux-amd64
+
+# Container token-store volume (lives on the homelab only)
+data/
