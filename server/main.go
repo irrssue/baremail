@@ -115,8 +115,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func (s *server) handleAuthGoogle(w http.ResponseWriter, r *http.Request) {
 	// access_type=offline yields a refresh_token so sessions outlive the ~1h
-	// access token, matching generateAuthUrl({ access_type: "offline" }).
-	url := s.oauthCfg.AuthCodeURL("", oauth2.AccessTypeOffline)
+	// access token. ApprovalForce (prompt=consent) is essential: Google only
+	// returns a refresh_token on the *first* consent for access_type=offline
+	// alone, so a re-login would otherwise overwrite the session with a
+	// refresh-token-less credential that dies ~1h later. Forcing the consent
+	// prompt guarantees every login mints a fresh refresh_token.
+	url := s.oauthCfg.AuthCodeURL("", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -177,6 +181,19 @@ func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		// the merged credentials back whenever Google mints a fresh access token.
 		base := s.oauthCfg.TokenSource(r.Context(), stored)
 		ts := &persistingSource{store: s.store, sessionToken: token, prev: stored, src: base}
+
+		// Validate the credential up front. Token() returns the cached access
+		// token when still valid (cheap, no network) and only hits Google when a
+		// refresh is needed. If that refresh fails — refresh token missing,
+		// revoked, or expired — the session is a zombie: present in the store but
+		// useless. Evict it and report 401 so the client drops to the sign-in
+		// screen instead of silently rendering an empty inbox.
+		if _, err := ts.Token(); err != nil {
+			log.Printf("Session %s token refresh failed, evicting: %v", token[:min(8, len(token))], err)
+			s.store.delete(token)
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+			return
+		}
 
 		svc, err := gmail.NewService(r.Context(), option.WithTokenSource(ts))
 		if err != nil {

@@ -618,19 +618,23 @@ function App() {
       .catch(() => {})
   }, [authenticated])
 
-  // Sign out: drop the session server-side, clear the local token, and reset to
-  // the logged-out view. Mirrors the old logout button behavior.
-  const signOut = useCallback(() => {
-    fetch(`${API}/auth/logout`, { method: "POST", headers: authHeaders() }).finally(() => {
-      localStorage.removeItem("bm_token")
-      setAuthenticated(false)
-      setProfile(null)
-      setSelected(null)
-      setComposing(false)
-      setSettingsOpen(false)
-      setEmails([])
-    })
+  // Clear all local session state and drop to the sign-in view. Used both by an
+  // explicit sign-out and when the server reports the session is dead (401).
+  const clearSession = useCallback(() => {
+    localStorage.removeItem("bm_token")
+    setAuthenticated(false)
+    setProfile(null)
+    setSelected(null)
+    setComposing(false)
+    setSettingsOpen(false)
+    setEmails([])
+    setLoading(false)
   }, [])
+
+  // Sign out: drop the session server-side, then reset locally.
+  const signOut = useCallback(() => {
+    fetch(`${API}/auth/logout`, { method: "POST", headers: authHeaders() }).finally(clearSession)
+  }, [clearSession])
 
   const openSettings = useCallback(() => {
     setSelected(null)
@@ -649,8 +653,17 @@ function App() {
     queryRef.current = q
     const qs = q ? `?q=${encodeURIComponent(q)}` : ""
     fetch(`${API}/api/emails${qs}`, { headers: authHeaders() })
-      .then((r) => r.json())
+      .then((r) => {
+        // A 401 means the session died server-side (refresh failed / evicted).
+        // Drop to the sign-in screen rather than rendering a fake empty inbox.
+        if (r.status === 401) {
+          clearSession()
+          return null
+        }
+        return r.json()
+      })
       .then((data) => {
+        if (!data) return
         // A stale response from a superseded query (user kept typing) must not
         // clobber the current results.
         if (queryRef.current !== q) return
