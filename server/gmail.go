@@ -12,8 +12,11 @@ import (
 )
 
 // emailSummary is one inbox list row: who | subject·snippet | relative-time.
+// A row now represents a whole conversation (Gmail thread): the latest message
+// supplies who/when/snippet, the first message supplies the subject, and Count
+// is how many messages the thread holds (the frontend shows a chip when > 1).
 type emailSummary struct {
-	ID      string `json:"id"`
+	ID      string `json:"id"` // thread id
 	Name    string `json:"name"`
 	Sender  string `json:"sender"`
 	Subject string `json:"subject"`
@@ -21,6 +24,7 @@ type emailSummary struct {
 	Date    string `json:"date"`
 	Ts      int64  `json:"ts"`
 	Unread  bool   `json:"unread"`
+	Count   int    `json:"count"`
 }
 
 // emailFull is the reader payload: serif subject, mono From/To head, prose body.
@@ -38,6 +42,127 @@ type emailFull struct {
 	Body       string `json:"body"`
 	BodyHTML   string `json:"bodyHtml"`
 	Snippet    string `json:"snippet"`
+}
+
+// threadMessage is one message inside a conversation reader. Same per-message
+// fields the single-message reader used, plus an Unread flag so the frontend
+// can leave unread messages expanded.
+type threadMessage struct {
+	ID        string `json:"id"`
+	MessageID string `json:"messageId"`
+	Name      string `json:"name"`
+	Sender    string `json:"sender"`
+	To        string `json:"to"`
+	Date      string `json:"date"`
+	Ts        int64  `json:"ts"`
+	Body      string `json:"body"`
+	BodyHTML  string `json:"bodyHtml"`
+	Snippet   string `json:"snippet"`
+	Unread    bool   `json:"unread"`
+}
+
+// threadFull is the reader payload for a conversation: every message in
+// chronological order plus thread-level subject. The top-level Sender/MessageID
+// (the latest message's) and ThreadID feed /api/send so the keyboard `r` reply
+// threads into the same conversation.
+type threadFull struct {
+	ID         string          `json:"id"` // thread id (== ThreadID)
+	ThreadID   string          `json:"threadId"`
+	Subject    string          `json:"subject"`
+	Name       string          `json:"name"`
+	Sender     string          `json:"sender"`
+	To         string          `json:"to"`
+	MessageID  string          `json:"messageId"`
+	References string          `json:"references"`
+	Snippet    string          `json:"snippet"`
+	Messages   []threadMessage `json:"messages"`
+}
+
+// partHeaders safely returns a message's MIME headers, tolerating a nil payload
+// (some Gmail responses omit it for empty/draft parts).
+func partHeaders(m *gmail.Message) []*gmail.MessagePartHeader {
+	if m == nil || m.Payload == nil {
+		return nil
+	}
+	return m.Payload.Headers
+}
+
+// summarizeThread collapses a Gmail thread into one inbox row. The latest
+// message gives who/when/snippet; the subject is the first non-empty Subject in
+// the thread (replies often carry "Re:" or an empty subject); the row is unread
+// if any message in the thread is unread.
+func summarizeThread(th *gmail.Thread) emailSummary {
+	msgs := th.Messages
+	if len(msgs) == 0 {
+		return emailSummary{ID: th.Id, Snippet: th.Snippet}
+	}
+	latest := msgs[len(msgs)-1]
+	name, sender := splitFrom(headerValue(partHeaders(latest), "From"))
+
+	subject := ""
+	unread := false
+	for _, m := range msgs {
+		if subject == "" {
+			subject = headerValue(partHeaders(m), "Subject")
+		}
+		if hasLabel(m.LabelIds, "UNREAD") {
+			unread = true
+		}
+	}
+
+	dateHeader := headerValue(partHeaders(latest), "Date")
+	return emailSummary{
+		ID:      th.Id,
+		Name:    name,
+		Sender:  sender,
+		Subject: subject,
+		Snippet: latest.Snippet,
+		Date:    relTime(dateHeader),
+		Ts:      tsOf(dateHeader),
+		Unread:  unread,
+		Count:   len(msgs),
+	}
+}
+
+// buildThread expands a full Gmail thread into the reader payload: every
+// message in conversation order, the thread subject, and the latest message's
+// identity/threading headers for a reply.
+func buildThread(th *gmail.Thread) threadFull {
+	out := threadFull{ID: th.Id, ThreadID: th.Id}
+	for _, msg := range th.Messages {
+		headers := partHeaders(msg)
+		name, sender := splitFrom(headerValue(headers, "From"))
+		var body, html string
+		walkBody(msg.Payload, &body, &html)
+		dateHeader := headerValue(headers, "Date")
+		out.Messages = append(out.Messages, threadMessage{
+			ID:        msg.Id,
+			MessageID: headerValue(headers, "Message-ID"),
+			Name:      name,
+			Sender:    sender,
+			To:        headerValue(headers, "To"),
+			Date:      relTime(dateHeader),
+			Ts:        tsOf(dateHeader),
+			Body:      body,
+			BodyHTML:  html,
+			Snippet:   msg.Snippet,
+			Unread:    hasLabel(msg.LabelIds, "UNREAD"),
+		})
+		if out.Subject == "" {
+			out.Subject = headerValue(headers, "Subject")
+		}
+	}
+	if n := len(th.Messages); n > 0 {
+		last := th.Messages[n-1]
+		lastOut := out.Messages[n-1]
+		out.Name = lastOut.Name
+		out.Sender = lastOut.Sender
+		out.To = lastOut.To
+		out.MessageID = lastOut.MessageID
+		out.Snippet = lastOut.Snippet
+		out.References = headerValue(partHeaders(last), "References")
+	}
+	return out
 }
 
 var fromRe = regexp.MustCompile(`^"?([^"<]*)"?\s*<(.+)>$`)

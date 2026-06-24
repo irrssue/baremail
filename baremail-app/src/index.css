@@ -626,6 +626,107 @@ main.page-main {
 .reply-btn:hover { color: var(--ink); border-color: var(--ink-4); }
 .reply-btn svg { display: block; }
 
+/* === Thread (conversation reader) ======================================== */
+/* The reader stacks every message in a Gmail thread oldest→newest. The latest
+   message and any unread open by default; the rest collapse to one clickable
+   summary line. A single-message thread renders with no thread chrome. */
+.thread-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  margin: -8px 0 22px;
+}
+.thread-msgs { display: flex; flex-direction: column; }
+
+/* An expanded message. A rule + breathing room divide it from the one above. */
+.tmsg {
+  padding-top: 26px;
+  margin-top: 26px;
+  border-top: 1px solid var(--rule);
+}
+.tmsg:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
+
+.tmsg .head { position: relative; }
+.tmsg .head.is-toggle { cursor: pointer; }
+.tmsg .head.is-toggle:hover .line b { color: var(--ink); }
+.tmsg-date {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* The reply footer between stacked messages stays light — the next message's
+   own top rule supplies the divider, so this one carries no border. */
+.tmsg-actions { margin-top: 22px; }
+
+/* A collapsed message: one quiet summary line, same column rhythm as an inbox
+   row, that expands on click. */
+.tmsg-collapsed {
+  display: grid;
+  grid-template-columns: 180px 1fr auto;
+  column-gap: 18px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin-top: 26px;
+  padding-top: 18px;
+  cursor: pointer;
+}
+.tmsg-collapsed:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+.tmsg-collapsed:hover .who { color: var(--ink); }
+.tmsg-collapsed .who {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tmsg-collapsed .snip {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.tmsg-collapsed .when {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  align-self: center;
+}
+.tmsg-collapsed.is-unread .who { font-weight: 700; color: var(--ink); }
+
+/* Inbox row conversation-count chip, sat after the sender name. */
+.mailrow .who .count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--ink-3);
+  margin-left: 6px;
+}
+
+@media (max-width: 600px) {
+  .tmsg-collapsed {
+    grid-template-columns: 1fr auto;
+    column-gap: 12px;
+    row-gap: 2px;
+  }
+  .tmsg-collapsed .who { grid-column: 1; }
+  .tmsg-collapsed .when { grid-column: 2; grid-row: 1; }
+  .tmsg-collapsed .snip { grid-column: 1 / -1; }
+}
+
 /* === Settings ============================================================ */
 /* Settings reuses .reader (crumb, serif h1, mono head). Each control sits in a
    row: label/description on the left, the action button on the right. */

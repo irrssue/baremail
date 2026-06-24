@@ -141,7 +141,7 @@ func TestSummaryJSONShape(t *testing.T) {
 	b, _ := json.Marshal(emailSummary{ID: "1", Name: "n", Sender: "s", Subject: "sub", Snippet: "snip", Date: "9:05 AM", Ts: 5, Unread: true})
 	var m map[string]any
 	_ = json.Unmarshal(b, &m)
-	for _, k := range []string{"id", "name", "sender", "subject", "snippet", "date", "ts", "unread"} {
+	for _, k := range []string{"id", "name", "sender", "subject", "snippet", "date", "ts", "unread", "count"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("summary JSON missing key %q (got %v)", k, m)
 		}
@@ -155,6 +155,113 @@ func TestFullJSONShape(t *testing.T) {
 	for _, k := range []string{"id", "threadId", "messageId", "references", "name", "sender", "subject", "to", "body", "bodyHtml", "snippet"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("full JSON missing key %q (got %v)", k, m)
+		}
+	}
+}
+
+// threadMsg builds a metadata-shaped Gmail message for the thread tests.
+func threadMsg(id, from, subject string, unread bool, snippet string) *gmail.Message {
+	labels := []string{"INBOX"}
+	if unread {
+		labels = append(labels, "UNREAD")
+	}
+	return &gmail.Message{
+		Id:       id,
+		Snippet:  snippet,
+		LabelIds: labels,
+		Payload: &gmail.MessagePart{
+			MimeType: "text/plain",
+			Headers: []*gmail.MessagePartHeader{
+				{Name: "From", Value: from},
+				{Name: "Subject", Value: subject},
+				{Name: "To", Value: "me@x.com"},
+				{Name: "Message-ID", Value: "<" + id + "@x>"},
+				{Name: "Date", Value: "Mon, 02 Jan 2006 15:04:05 -0700"},
+			},
+		},
+	}
+}
+
+// TestSummarizeThread checks the inbox-row collapse: latest message supplies
+// who/snippet, the first non-empty subject wins, any unread flags the row.
+func TestSummarizeThread(t *testing.T) {
+	th := &gmail.Thread{
+		Id: "t1",
+		Messages: []*gmail.Message{
+			threadMsg("m1", `"Ann" <ann@x.com>`, "Hello", false, "first"),
+			threadMsg("m2", `"Bob" <bob@x.com>`, "Re: Hello", true, "latest reply"),
+		},
+	}
+	s := summarizeThread(th)
+	if s.ID != "t1" {
+		t.Errorf("ID = %q, want t1", s.ID)
+	}
+	if s.Count != 2 {
+		t.Errorf("Count = %d, want 2", s.Count)
+	}
+	if s.Subject != "Hello" {
+		t.Errorf("Subject = %q, want first-message subject Hello", s.Subject)
+	}
+	if s.Name != "Bob" || s.Sender != "bob@x.com" {
+		t.Errorf("latest sender = (%q,%q), want Bob/bob@x.com", s.Name, s.Sender)
+	}
+	if !s.Unread {
+		t.Error("thread with one unread message should be unread")
+	}
+	if s.Snippet != "latest reply" {
+		t.Errorf("Snippet = %q, want latest message snippet", s.Snippet)
+	}
+}
+
+// TestBuildThread checks the reader payload: messages in order, thread subject
+// from the first, and the latest message's identity hoisted for a reply.
+func TestBuildThread(t *testing.T) {
+	th := &gmail.Thread{
+		Id: "t9",
+		Messages: []*gmail.Message{
+			threadMsg("m1", `"Ann" <ann@x.com>`, "Hi", false, "one"),
+			threadMsg("m2", `"Bob" <bob@x.com>`, "Re: Hi", false, "two"),
+		},
+	}
+	out := buildThread(th)
+	if out.ID != "t9" || out.ThreadID != "t9" {
+		t.Errorf("ID/ThreadID = %q/%q, want t9", out.ID, out.ThreadID)
+	}
+	if len(out.Messages) != 2 {
+		t.Fatalf("Messages = %d, want 2", len(out.Messages))
+	}
+	if out.Subject != "Hi" {
+		t.Errorf("Subject = %q, want Hi", out.Subject)
+	}
+	if out.Sender != "bob@x.com" || out.MessageID != "<m2@x>" {
+		t.Errorf("reply identity = (%q,%q), want bob@x.com/<m2@x>", out.Sender, out.MessageID)
+	}
+	if out.Messages[0].Sender != "ann@x.com" || out.Messages[1].Sender != "bob@x.com" {
+		t.Errorf("message order wrong: %q then %q", out.Messages[0].Sender, out.Messages[1].Sender)
+	}
+}
+
+func TestThreadFullJSONShape(t *testing.T) {
+	b, _ := json.Marshal(threadFull{
+		ID: "t1", ThreadID: "t1", Subject: "s", Name: "n", Sender: "se", To: "to",
+		MessageID: "<m>", References: "<r>", Snippet: "sn",
+		Messages: []threadMessage{{ID: "m1", MessageID: "<m1>", Name: "n", Sender: "se", To: "to", Date: "9:05 AM", Ts: 1, Body: "b", BodyHTML: "<p>", Snippet: "sn", Unread: true}},
+	})
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	for _, k := range []string{"id", "threadId", "subject", "name", "sender", "to", "messageId", "references", "snippet", "messages"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("threadFull JSON missing key %q (got %v)", k, m)
+		}
+	}
+	msgs, _ := m["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("messages len = %d, want 1", len(msgs))
+	}
+	mm, _ := msgs[0].(map[string]any)
+	for _, k := range []string{"id", "messageId", "name", "sender", "to", "date", "ts", "body", "bodyHtml", "snippet", "unread"} {
+		if _, ok := mm[k]; !ok {
+			t.Errorf("threadMessage JSON missing key %q (got %v)", k, mm)
 		}
 	}
 }

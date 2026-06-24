@@ -20,17 +20,25 @@ A bare, minimal email reader. Gmail OAuth → read-only inbox view. Nothing more
 - `sessions.go` — disk-backed token store (debounced atomic write, owner-only)
 - `googletoken.go` — token JSON in `googleapis` wire shape (`expiry_date` millis)
   so sessions written by the old Node server still load
-- `gmail.go` — header parse, MIME body walk, relative-time formatting
+- `gmail.go` — header parse, MIME body walk, relative-time formatting,
+  thread→inbox-row summary (`summarizeThread`) and thread→reader (`buildThread`)
 - `send.go` — `/api/send`: recipient validation, Markdown render, multipart/alternative build, reply threading
 - `profile.go` — `/api/profile`: signed-in Google account (name/email/photo) via the OIDC userinfo endpoint
 - `dotenv.go` — minimal `.env` loader (stands in for Node's dotenv)
 - `*_test.go` — unit + interop tests (`go test ./...`)
 
-API contract (unchanged from the old Node server, byte-for-byte JSON):
+API contract:
 `GET /auth/google` · `/auth/google/callback?code=` → redirect `CLIENT_URL?token=` ·
 `/auth/status` → `{authenticated}` · `/auth/logout` → `{ok}` ·
-`/api/emails?pageToken=` → `{emails:[{id,name,sender,subject,snippet,date,ts,unread}],nextPageToken}` ·
-`/api/emails/:id` → `{id,threadId,messageId,references,name,sender,subject,to,body,bodyHtml,snippet}` ·
+`/api/emails?pageToken=` → `{emails:[{id,name,sender,subject,snippet,date,ts,unread,count}],nextPageToken}`
+(one row per **conversation** — `id` is a Gmail thread id, the latest message
+gives who/when/snippet, `unread` if any message is, `count` = messages in the
+thread; `q` passes through as a Gmail thread search) ·
+`/api/emails/:id` (`:id` is a **thread id**) →
+`{id,threadId,subject,name,sender,to,messageId,references,snippet,messages:[{id,messageId,name,sender,to,date,ts,body,bodyHtml,snippet,unread}]}`
+(`messages` is the whole conversation oldest→newest; the top-level
+`sender`/`messageId`/`threadId` are the latest message's, so a reply threads
+into the same conversation) ·
 `POST /api/send` `{to,cc,bcc,subject,body,inReplyTo,threadId}` → `{id,threadId}`
 (body is **Markdown** → rendered server-side via goldmark into a
 `multipart/alternative` message; `inReplyTo`+`threadId` thread a reply; 403 if
@@ -66,8 +74,12 @@ Fonts: **Fraunces** (titles/brand), **JetBrains Mono** (meta, time, labels),
 Layout: sticky serif brand topbar (right cluster = profile avatar · search ·
 compose), 820px centered column, mono footer. The avatar opens a dropdown
 (account identity · Settings · Sign out); Settings reuses the reader shell.
-List row = `who | subject·snippet | relative-time`. Reader = serif subject,
-mono From/To head, prose body. Mobile breakpoint at 600px.
+List row = `who | subject·snippet | relative-time` (one per conversation; a mono
+count chip after the sender when the thread has >1 message). Reader = serif
+subject over a stacked **conversation**: each message a mono From/To head + prose
+body, latest + any unread expanded, the rest collapsed to a clickable summary
+line (single-message threads render as a plain one-message reader). Mobile
+breakpoint at 600px.
 
 ## Dev
 ```

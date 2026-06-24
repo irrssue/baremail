@@ -562,6 +562,88 @@ function Shell({ children, onBrand, onCompose, search, profile, onSettings, onSi
   )
 }
 
+// Flat reply arrow, twin of the reader's reply affordance.
+function ReplyIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="9 17 4 12 9 7" />
+      <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+    </svg>
+  )
+}
+
+// Reader for a conversation: every message in the thread stacked oldest→newest.
+// The latest message and any unread open by default; the rest collapse to one
+// clickable summary line. A single-message thread reads exactly like the old
+// one-message reader (no thread chrome, full-width reply footer).
+function ThreadView({ thread, onClose, onReply }) {
+  const messages = thread.messages || []
+  const single = messages.length <= 1
+  const lastId = messages.length ? messages[messages.length - 1].id : null
+  const [open, setOpen] = useState(() => {
+    const init = {}
+    for (const m of messages) init[m.id] = m.id === lastId || m.unread
+    return init
+  })
+  const toggle = (id) => setOpen((o) => ({ ...o, [id]: !o[id] }))
+
+  return (
+    <article className="reader thread">
+      <button className="crumb" onClick={onClose}>
+        ← inbox
+      </button>
+      <h1>{thread.subject || "(no subject)"}</h1>
+      {!single && <div className="thread-count">{messages.length} messages</div>}
+      <div className="thread-msgs">
+        {messages.map((m) => {
+          const isOpen = single || open[m.id]
+          if (!isOpen) {
+            return (
+              <button
+                key={m.id}
+                type="button"
+                className={`tmsg-collapsed${m.unread ? " is-unread" : ""}`}
+                onClick={() => toggle(m.id)}
+              >
+                <span className="who">{m.name || m.sender}</span>
+                <span className="snip">{m.snippet}</span>
+                {m.date && <span className="when">{m.date}</span>}
+              </button>
+            )
+          }
+          return (
+            <div key={m.id} className={`tmsg${m.unread ? " is-unread" : ""}`}>
+              <div
+                className={`head${single ? "" : " is-toggle"}`}
+                onClick={single ? undefined : () => toggle(m.id)}
+              >
+                {m.date && <span className="tmsg-date">{m.date}</span>}
+                <div className="line">
+                  <span className="label">From</span> <b>{m.sender}</b>
+                </div>
+                <div className="line">
+                  <span className="label">To</span> {m.to}
+                </div>
+              </div>
+              {m.bodyHtml ? (
+                <HtmlBody html={m.bodyHtml} />
+              ) : (
+                <div className="body">{m.body || m.snippet}</div>
+              )}
+              <div className={single ? "reader-actions" : "tmsg-actions"}>
+                <button className="reply-btn" type="button" onClick={() => onReply(m)}>
+                  <ReplyIcon />
+                  reply
+                </button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </article>
+  )
+}
+
 function App() {
   const [emails, setEmails] = useState([])
   const [selected, setSelected] = useState(null)
@@ -896,34 +978,18 @@ function App() {
         onSettings={openSettings}
         onSignOut={signOut}
       >
-        <article className="reader">
-          <button className="crumb" onClick={closeReader}>
-            ← inbox
-          </button>
-          <h1>{selected.subject || "(no subject)"}</h1>
-          <div className="head">
-            <div className="line">
-              <span className="label">From</span> <b>{selected.sender}</b>
-            </div>
-            <div className="line">
-              <span className="label">To</span> {selected.to}
-            </div>
-          </div>
-          {selected.bodyHtml ? (
-            <HtmlBody html={selected.bodyHtml} />
-          ) : (
-            <div className="body">{selected.body || selected.snippet}</div>
-          )}
-          <div className="reader-actions">
-            <button className="reply-btn" type="button" onClick={() => openReply(selected)}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <polyline points="9 17 4 12 9 7" />
-                <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
-              </svg>
-              reply
-            </button>
-          </div>
-        </article>
+        <ThreadView
+          thread={selected}
+          onClose={closeReader}
+          onReply={(m) =>
+            openReply({
+              sender: m.sender,
+              subject: selected.subject,
+              messageId: m.messageId,
+              threadId: selected.threadId,
+            })
+          }
+        />
       </Shell>
     )
   }
@@ -961,7 +1027,10 @@ function App() {
                   }`}
                   onClick={() => openEmail(email)}
                 >
-                  <span className="who">{email.name}</span>
+                  <span className="who">
+                    {email.name}
+                    {email.count > 1 && <span className="count">{email.count}</span>}
+                  </span>
                   <span className="subj">
                     {email.subject}
                     {email.snippet && (

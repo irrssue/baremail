@@ -220,7 +220,9 @@ func tokenSourceFrom(r *http.Request) oauth2.TokenSource {
 
 func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
 	svc := gmailFrom(r)
-	call := svc.Users.Messages.List("me").MaxResults(20)
+	// List conversations (Gmail threads), not individual messages, so a
+	// back-and-forth shows as one inbox row.
+	call := svc.Users.Threads.List("me").MaxResults(20)
 	if pt := r.URL.Query().Get("pageToken"); pt != "" {
 		call = call.PageToken(pt)
 	}
@@ -231,27 +233,27 @@ func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := call.Do()
 	if err != nil {
-		log.Printf("Fetch emails error: %v", err)
+		log.Printf("Fetch threads error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch emails"})
 		return
 	}
-	if len(list.Messages) == 0 {
+	if len(list.Threads) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"emails": []emailSummary{}, "nextPageToken": nil})
 		return
 	}
 
-	// Fetch each message's metadata concurrently (mirrors Promise.all). Preserve
-	// the original list order by indexing into a fixed-size slice.
-	emails := make([]emailSummary, len(list.Messages))
+	// Fetch each thread's message metadata concurrently (mirrors Promise.all).
+	// Preserve the original list order by indexing into a fixed-size slice.
+	emails := make([]emailSummary, len(list.Threads))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var firstErr error
 
-	for i, msg := range list.Messages {
+	for i, th := range list.Threads {
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
-			full, err := svc.Users.Messages.Get("me", id).
+			full, err := svc.Users.Threads.Get("me", id).
 				Format("metadata").
 				MetadataHeaders("From", "Subject", "Date").
 				Do()
@@ -263,21 +265,8 @@ func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
 				mu.Unlock()
 				return
 			}
-			headers := full.Payload.Headers
-			from := headerValue(headers, "From")
-			name, sender := splitFrom(from)
-			dateHeader := headerValue(headers, "Date")
-			emails[i] = emailSummary{
-				ID:      id,
-				Name:    name,
-				Sender:  sender,
-				Subject: headerValue(headers, "Subject"),
-				Snippet: full.Snippet,
-				Date:    relTime(dateHeader),
-				Ts:      tsOf(dateHeader),
-				Unread:  hasLabel(full.LabelIds, "UNREAD"),
-			}
-		}(i, msg.Id)
+			emails[i] = summarizeThread(full)
+		}(i, th.Id)
 	}
 	wg.Wait()
 
@@ -305,33 +294,16 @@ func (s *server) handleEmailByID(w http.ResponseWriter, r *http.Request) {
 	id := m[1]
 
 	svc := gmailFrom(r)
-	msg, err := svc.Users.Messages.Get("me", id).Format("full").Do()
+	// `id` is a thread id (the inbox list returns threads now). Fetch the whole
+	// conversation so the reader can stack every message.
+	th, err := svc.Users.Threads.Get("me", id).Format("full").Do()
 	if err != nil {
-		log.Printf("Fetch email error: %v", err)
+		log.Printf("Fetch thread error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch email"})
 		return
 	}
 
-	headers := msg.Payload.Headers
-	from := headerValue(headers, "From")
-	name, sender := splitFrom(from)
-
-	var body, html string
-	walkBody(msg.Payload, &body, &html)
-
-	writeJSON(w, http.StatusOK, emailFull{
-		ID:         msg.Id,
-		ThreadID:   msg.ThreadId,
-		MessageID:  headerValue(headers, "Message-ID"),
-		References: headerValue(headers, "References"),
-		Name:       name,
-		Sender:     sender,
-		Subject:    headerValue(headers, "Subject"),
-		To:         headerValue(headers, "To"),
-		Body:       body,
-		BodyHTML:   html,
-		Snippet:    msg.Snippet,
-	})
+	writeJSON(w, http.StatusOK, buildThread(th))
 }
 
 // --- Static frontend (single-origin deploy) ---
