@@ -17,35 +17,64 @@ A bare, minimal email reader. Gmail OAuth → read-only inbox view. Nothing more
 
 ### Go backend layout (`/server`)
 - `main.go` — HTTP routes, OAuth config, CORS, static + SPA fallback
-- `sessions.go` — disk-backed token store (debounced atomic write, owner-only)
+- `sessions.go` — disk-backed token store (debounced atomic write, owner-only).
+  A session maps to **one or more linked Google accounts** (multi-account inbox)
+- `session.go` — the `session`/`account` model + disk (de)serialization. A lone
+  identity-less account still writes the bare-token shape (old-store compatible);
+  identified or multi-account sessions use `{"accounts":[…]}`
 - `googletoken.go` — token JSON in `googleapis` wire shape (`expiry_date` millis)
   so sessions written by the old Node server still load
+- `links.go` — short-lived in-memory map from an OAuth `state` to the session an
+  "add account" flow links into (keeps the real session token off Google)
 - `gmail.go` — header parse, MIME body walk, relative-time formatting,
   thread→inbox-row summary (`summarizeThread`) and thread→reader (`buildThread`)
-- `send.go` — `/api/send`: recipient validation, Markdown render, multipart/alternative build, reply threading
-- `profile.go` — `/api/profile`: signed-in Google account (name/email/photo) via the OIDC userinfo endpoint
+- `send.go` — `/api/send`: recipient validation, Markdown render, multipart/alternative build, reply threading, per-account send
+- `profile.go` — `/api/profile`, `/api/accounts`, `/api/accounts/remove`: linked
+  Google accounts (name/email/photo) via the OIDC userinfo endpoint
 - `dotenv.go` — minimal `.env` loader (stands in for Node's dotenv)
-- `*_test.go` — unit + interop tests (`go test ./...`)
+- `*_test.go` — unit + interop + multi-account tests (`go test ./...`)
+
+### Multi-account
+One browser session can link several Google accounts; the inbox **merges mail
+across all of them**. The backend owns the merge (the frontend keeps a single
+session token). "Add account" runs the normal OAuth flow with `?link=<session
+token>`; the callback attaches the new account to that session instead of minting
+a new one. Each list row carries which `account` it came from; the reader, reply,
+and send route to that mailbox. A single-account session behaves exactly as
+before (no `account` tag, native Gmail order, primary mailbox).
 
 API contract:
-`GET /auth/google` · `/auth/google/callback?code=` → redirect `CLIENT_URL?token=` ·
-`/auth/status` → `{authenticated}` · `/auth/logout` → `{ok}` ·
-`/api/emails?pageToken=` → `{emails:[{id,name,sender,subject,snippet,date,ts,unread,count}],nextPageToken}`
+`GET /auth/google[?link=<sessionToken>]` (the optional `link` adds an account to
+that session) · `/auth/google/callback?code=&state=` → redirect
+`CLIENT_URL?token=` for a fresh login, or `CLIENT_URL?linked=1` for an
+add-account · `/auth/status` → `{authenticated}` · `/auth/logout` → `{ok}` (ends
+the whole session, all accounts) ·
+`/api/emails?pageToken=` → `{emails:[{id,name,sender,subject,snippet,date,ts,unread,count,account}],nextPageToken}`
 (one row per **conversation** — `id` is a Gmail thread id, the latest message
 gives who/when/snippet, `unread` if any message is, `count` = messages in the
-thread; `q` passes through as a Gmail thread search) ·
-`/api/emails/:id` (`:id` is a **thread id**) →
-`{id,threadId,subject,name,sender,to,messageId,references,snippet,messages:[{id,messageId,name,sender,to,date,ts,body,bodyHtml,snippet,unread}]}`
+thread, `account` = owning mailbox email when >1 account is linked; `q` passes
+through as a Gmail thread search. `nextPageToken` is an **opaque composite
+cursor** — a base64 per-account page-token map — fetched by interleaving one
+Gmail page per account, newest-first) ·
+`/api/emails/:id?account=` (`:id` is a **thread id**, `account` picks the
+mailbox) →
+`{id,threadId,subject,name,sender,to,messageId,references,snippet,account,messages:[{id,messageId,name,sender,to,date,ts,body,bodyHtml,snippet,unread}]}`
 (`messages` is the whole conversation oldest→newest; the top-level
 `sender`/`messageId`/`threadId` are the latest message's, so a reply threads
 into the same conversation) ·
-`POST /api/send` `{to,cc,bcc,subject,body,inReplyTo,threadId}` → `{id,threadId}`
-(body is **Markdown** → rendered server-side via goldmark into a
-`multipart/alternative` message; `inReplyTo`+`threadId` thread a reply; 403 if
-the session was consented before the send scope existed) ·
-`GET /api/profile` → `{name,email,picture}` (signed-in Google account for the
-topbar profile chip, fetched from the OIDC userinfo endpoint; 403 if the session
-predates the userinfo scopes → frontend falls back to an initials chip).
+`POST /api/send` `{to,cc,bcc,subject,body,inReplyTo,threadId,account}` →
+`{id,threadId}` (body is **Markdown** → rendered server-side via goldmark into a
+`multipart/alternative` message; `inReplyTo`+`threadId` thread a reply; `account`
+sends from that linked mailbox; 403 if the session was consented before the send
+scope existed) ·
+`GET /api/profile[?account=]` → `{name,email,picture}` (one account's identity
+from the OIDC userinfo endpoint; 403 if the session predates the userinfo scopes
+→ frontend falls back to an initials chip) ·
+`GET /api/accounts` → `{accounts:[{email,name,picture}]}` (every linked account,
+for the topbar switcher + Settings; identity stored at link time, backfilled
+once for old sessions) ·
+`POST /api/accounts/remove` `{email}` → `{ok,remaining}` (unlinks one account;
+`remaining:0` means the last one went and the session was deleted).
 OAuth scopes: `gmail.readonly` + `gmail.send` + `userinfo.profile` +
 `userinfo.email`.
 Env: `PORT CLIENT_URL CLIENT_ID CLIENT_SECRET REDIRECT_URI STATIC_DIR SESSIONS_FILE`.
@@ -72,8 +101,12 @@ Fonts: **Fraunces** (titles/brand), **JetBrains Mono** (meta, time, labels),
 **Inter** (body). Loaded via Google Fonts in `baremail-app/index.html`.
 
 Layout: sticky serif brand topbar (right cluster = profile avatar · search ·
-compose), 820px centered column, mono footer. The avatar opens a dropdown
-(account identity · Settings · Sign out); Settings reuses the reader shell.
+compose), 820px centered column, mono footer. The avatar (primary account) opens
+a dropdown listing **every linked account** · Add account · Settings · Sign out;
+Settings reuses the reader shell and lists accounts with per-account Remove + an
+Add control. In a **merged inbox** (>1 account) each list row gets a small
+account-color dot (`acctColor`, hashed from the email) before the sender, and
+compose shows a From-account selector. A single account hides both.
 List row = `who | subject·snippet | relative-time` (one per conversation; a mono
 count chip after the sender when the thread has >1 message). Reader = serif
 subject over a stacked **conversation**: each message a mono From/To head + prose

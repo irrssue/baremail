@@ -165,18 +165,22 @@ function HtmlBody({ html }) {
 // inReplyTo, threadId } to /api/send; the backend renders the Markdown body and
 // builds the RFC 2822 message. When `reply` is set the To/Subject are prefilled
 // and the message threads onto the original conversation.
-function Compose({ onClose, reply }) {
+function Compose({ onClose, reply, accounts }) {
   const [to, setTo] = useState(reply?.to || "")
   const [cc, setCc] = useState("")
   const [bcc, setBcc] = useState("")
   const [subject, setSubject] = useState(reply?.subject || "")
   const [body, setBody] = useState("")
+  // Which linked account the message goes out from. A reply defaults to the
+  // mailbox that received it; a new message to the primary account.
+  const [from, setFrom] = useState(reply?.account || accounts?.[0]?.email || "")
   // Cc/Bcc fields stay hidden until asked for, keeping the form minimal.
   const [showCc, setShowCc] = useState(false)
   const [status, setStatus] = useState("idle") // idle | sending | sent | error
   const [error, setError] = useState("")
   const toRef = useRef(null)
   const bodyRef = useRef(null)
+  const multiAccount = accounts && accounts.length > 1
 
   // Replies land focus in the body (recipient is known); new mail in To.
   useEffect(() => {
@@ -201,6 +205,7 @@ function Compose({ onClose, reply }) {
           body,
           inReplyTo: reply?.inReplyTo || "",
           threadId: reply?.threadId || "",
+          account: from,
         }),
       })
       if (!res.ok) {
@@ -214,7 +219,7 @@ function Compose({ onClose, reply }) {
       setStatus("error")
       setError(e.message)
     }
-  }, [to, cc, bcc, subject, body, reply, onClose])
+  }, [to, cc, bcc, subject, body, from, reply, onClose])
 
   // Cmd/Ctrl+Enter sends from anywhere in the form.
   const onFormKey = (e) => {
@@ -231,6 +236,23 @@ function Compose({ onClose, reply }) {
       </button>
       <h1>{reply ? "Reply" : "New message"}</h1>
       <div className="head">
+        {multiAccount && (
+          <div className="line">
+            <label className="label" htmlFor="cmp-from">From</label>
+            <select
+              id="cmp-from"
+              className="compose-input compose-select"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            >
+              {accounts.map((a) => (
+                <option key={a.email} value={a.email}>
+                  {a.email}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="line">
           <label className="label" htmlFor="cmp-to">To</label>
           <input
@@ -334,10 +356,21 @@ function initialsOf(profile) {
   return (first + last).toUpperCase()
 }
 
-// Settings view — reuses the reader shell (crumb, serif h1, mono head). baremail
-// is deliberately bare, so settings is just the connected Google account and a
-// sign-out control; the From/To-style head shows the signed-in identity.
-function Settings({ profile, onClose, onSignOut }) {
+// Stable muted color for an account, used as the per-row dot that tells merged
+// inboxes apart. Hashed from the email so the same account always gets the same
+// hue; low saturation keeps it quiet against the dark theme.
+function acctColor(email) {
+  let h = 0
+  const s = email || ""
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360
+  return `hsl(${h} 42% 56%)`
+}
+
+// Settings view — reuses the reader shell (crumb, serif h1, mono head). Lists
+// every connected Google account with a per-account remove control, an "add
+// account" affordance, and a sign-out that ends the whole session.
+function Settings({ accounts, onClose, onSignOut, onAddAccount, onRemoveAccount }) {
+  const list = accounts || []
   return (
     <article className="reader settings">
       <button className="crumb" onClick={onClose}>
@@ -346,20 +379,55 @@ function Settings({ profile, onClose, onSignOut }) {
       <h1>Settings</h1>
       <div className="head">
         <div className="line">
-          <span className="label">Account</span>{" "}
-          <b>{profile?.name || "Signed in"}</b>
+          <span className="label">Accounts</span> {list.length || 1} connected
         </div>
-        {profile?.email && (
-          <div className="line">
-            <span className="label">Email</span> {profile.email}
-          </div>
-        )}
       </div>
+
+      {list.map((a) => (
+        <div className="settings-row" key={a.email || "primary"}>
+          <div className="settings-row-text">
+            <span className="settings-row-title acct-line">
+              <span className="acct-dot" style={{ background: acctColor(a.email) }} />
+              {a.name || a.email || "Signed in"}
+            </span>
+            {a.email && <span className="settings-row-sub">{a.email}</span>}
+          </div>
+          {/* Removing the last account would be a sign-out — hide it there and
+              steer the user to the dedicated control below. */}
+          {list.length > 1 && (
+            <button
+              className="reply-btn"
+              type="button"
+              onClick={() => onRemoveAccount(a.email)}
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      ))}
+
+      <div className="settings-row">
+        <div className="settings-row-text">
+          <span className="settings-row-title">Add account</span>
+          <span className="settings-row-sub">
+            Connect another Google account; its mail joins this inbox.
+          </span>
+        </div>
+        <button className="reply-btn" type="button" onClick={onAddAccount}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Add
+        </button>
+      </div>
+
       <div className="settings-row">
         <div className="settings-row-text">
           <span className="settings-row-title">Sign out</span>
           <span className="settings-row-sub">
-            End this session on baremail. You can sign back in with Google any time.
+            End this session on baremail (all accounts). You can sign back in with
+            Google any time.
           </span>
         </div>
         <button className="reply-btn" type="button" onClick={onSignOut}>
@@ -375,14 +443,36 @@ function Settings({ profile, onClose, onSignOut }) {
   )
 }
 
-// Topbar profile chip: a round Google avatar that opens a small dropdown with
-// the account identity, a Settings entry, and Sign out. The photo comes from
-// /api/profile; if it's missing (or 404s on a pre-userinfo-scope session) the
-// chip falls back to initials. Closes on outside-click, Escape, or blur.
-function Profile({ profile, onSettings, onSignOut }) {
-  const [open, setOpen] = useState(false)
+// One avatar image-or-initials disc, reused by the chip and the dropdown's
+// account list. Falls back to initials when there's no photo or it fails.
+function AccountAvatar({ account, className }) {
   const [imgOk, setImgOk] = useState(true)
+  const showImg = imgOk && account?.picture
+  return (
+    <span className={`avatar ${className || ""}`} title={account?.email || "account"}>
+      {showImg ? (
+        <img
+          src={account.picture}
+          alt=""
+          referrerPolicy="no-referrer"
+          onError={() => setImgOk(false)}
+        />
+      ) : (
+        <span className="avatar-initials">{initialsOf(account)}</span>
+      )}
+    </span>
+  )
+}
+
+// Topbar profile chip: a round Google avatar (the primary account) that opens a
+// dropdown listing every connected account, plus Add account, Settings, and Sign
+// out. Photos come from /api/accounts; a missing one (or a pre-userinfo-scope
+// session) falls back to initials. Closes on outside-click or Escape.
+function Profile({ accounts, onSettings, onSignOut, onAddAccount }) {
+  const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
+  const list = accounts || []
+  const primary = list[0] || null
 
   // Outside-click + Escape close the menu.
   useEffect(() => {
@@ -401,39 +491,44 @@ function Profile({ profile, onSettings, onSignOut }) {
     }
   }, [open])
 
-  const initials = initialsOf(profile)
-  const showImg = imgOk && profile?.picture
-
   return (
     <div className="profile" ref={wrapRef}>
       <button
-        className="avatar"
+        className="avatar-btn"
         onClick={() => setOpen((o) => !o)}
         aria-label="account menu"
         aria-haspopup="menu"
         aria-expanded={open}
-        title={profile?.email || "account"}
+        title={primary?.email || "account"}
       >
-        {showImg ? (
-          <img
-            src={profile.picture}
-            alt=""
-            referrerPolicy="no-referrer"
-            onError={() => setImgOk(false)}
-          />
-        ) : (
-          <span className="avatar-initials">{initials}</span>
-        )}
+        <AccountAvatar account={primary} />
       </button>
       {open && (
         <div className="profile-menu" role="menu">
-          <div className="profile-id">
-            <span className="profile-name">{profile?.name || "Signed in"}</span>
-            {profile?.email && (
-              <span className="profile-email">{profile.email}</span>
-            )}
-          </div>
+          {list.map((a, i) => (
+            <div className="profile-id" key={a.email || `acct-${i}`}>
+              <AccountAvatar account={a} className="avatar-sm" />
+              <span className="profile-id-text">
+                <span className="profile-name">{a.name || "Signed in"}</span>
+                {a.email && <span className="profile-email">{a.email}</span>}
+              </span>
+            </div>
+          ))}
           <div className="profile-sep" />
+          <button
+            className="menu-item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              onAddAccount?.()
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Add account
+          </button>
           <button
             className="menu-item"
             role="menuitem"
@@ -469,7 +564,7 @@ function Profile({ profile, onSettings, onSignOut }) {
   )
 }
 
-function Shell({ children, onBrand, onCompose, search, profile, onSettings, onSignOut }) {
+function Shell({ children, onBrand, onCompose, search, accounts, onSettings, onSignOut, onAddAccount }) {
   return (
     <>
       <header className="topbar">
@@ -477,11 +572,12 @@ function Shell({ children, onBrand, onCompose, search, profile, onSettings, onSi
           baremail
         </button>
         <div className="right">
-          {profile && (
+          {accounts && accounts.length > 0 && (
             <Profile
-              profile={profile}
+              accounts={accounts}
               onSettings={onSettings}
               onSignOut={onSignOut}
+              onAddAccount={onAddAccount}
             />
           )}
           {search && (
@@ -655,8 +751,9 @@ function App() {
   const [composing, setComposing] = useState(false)
   // When set, the compose view opens as a threaded reply (prefilled To/Subject).
   const [replyCtx, setReplyCtx] = useState(null)
-  // Google account (name/email/photo) for the topbar profile chip + settings.
-  const [profile, setProfile] = useState(null)
+  // Every linked Google account (name/email/photo) for the topbar switcher,
+  // settings, per-row tags, and compose From. accounts[0] is the primary.
+  const [accounts, setAccounts] = useState([])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [activeIdx, setActiveIdx] = useState(-1)
   const sentinelRef = useRef(null)
@@ -675,6 +772,12 @@ function App() {
       window.history.replaceState({}, "", window.location.pathname)
     }
 
+    // After an "add account" link flow the callback returns ?linked=1 (no new
+    // token). Strip it; the authenticated effects below refetch accounts + mail.
+    if (params.get("linked")) {
+      window.history.replaceState({}, "", window.location.pathname)
+    }
+
     fetch(`${API}/auth/status`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => {
@@ -686,26 +789,30 @@ function App() {
       .catch(() => setLoading(false))
   }, [])
 
-  // Load the Google account profile (name/email/photo) once authenticated. A
-  // 403 means the session predates the userinfo scopes — leave profile null and
-  // the chip renders a neutral fallback; everything else still works.
+  // Load the linked Google accounts (name/email/photo) once authenticated. An
+  // empty list (e.g. a session predating the userinfo scopes) just renders a
+  // neutral fallback chip; everything else still works.
+  const loadAccounts = useCallback(() => {
+    fetch(`${API}/api/accounts`, { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data?.accounts && setAccounts(data.accounts))
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     if (!authenticated) {
-      setProfile(null)
+      setAccounts([])
       return
     }
-    fetch(`${API}/api/profile`, { headers: authHeaders() })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => data && setProfile(data))
-      .catch(() => {})
-  }, [authenticated])
+    loadAccounts()
+  }, [authenticated, loadAccounts])
 
   // Clear all local session state and drop to the sign-in view. Used both by an
   // explicit sign-out and when the server reports the session is dead (401).
   const clearSession = useCallback(() => {
     localStorage.removeItem("bm_token")
     setAuthenticated(false)
-    setProfile(null)
+    setAccounts([])
     setSelected(null)
     setComposing(false)
     setSettingsOpen(false)
@@ -717,6 +824,36 @@ function App() {
   const signOut = useCallback(() => {
     fetch(`${API}/auth/logout`, { method: "POST", headers: authHeaders() }).finally(clearSession)
   }, [clearSession])
+
+  // Add another Google account: a full-page OAuth round-trip that links the new
+  // account to this session (the current token rides along as ?link so the
+  // server attaches the result rather than minting a new session).
+  const addAccount = useCallback(() => {
+    window.location.href = `${API}/auth/google?link=${encodeURIComponent(getToken() || "")}`
+  }, [])
+
+  // Remove a linked account, then refresh the switcher and the merged inbox.
+  // Removing the last account ends the session server-side → drop to sign-in.
+  const removeAccount = useCallback(
+    (email) => {
+      fetch(`${API}/api/accounts/remove`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ email }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data && data.remaining === 0) {
+            clearSession()
+            return
+          }
+          loadAccounts()
+          loadEmails(queryRef.current)
+        })
+        .catch(() => {})
+    },
+    [clearSession, loadAccounts]
+  )
 
   const openSettings = useCallback(() => {
     setSelected(null)
@@ -799,7 +936,10 @@ function App() {
     // Push a history entry so the browser Back button returns to the inbox
     // (this in-app view) instead of unwinding past the app to the OAuth login.
     window.history.pushState({ bmReader: true }, "")
-    fetch(`${API}/api/emails/${email.id}`, { headers: authHeaders() })
+    // ?account routes the fetch to the mailbox this thread belongs to (the row
+    // carried it). Empty for a single-account inbox → the primary account.
+    const acct = email.account ? `?account=${encodeURIComponent(email.account)}` : ""
+    fetch(`${API}/api/emails/${email.id}${acct}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((data) => setSelected(data))
   }
@@ -843,6 +983,8 @@ function App() {
       subject: /^re:/i.test(subj) ? subj : `Re: ${subj}`,
       inReplyTo: email.messageId || "",
       threadId: email.threadId || "",
+      // Send the reply from the mailbox that received the message.
+      account: email.account || "",
     })
     window.history.pushState({ bmCompose: true }, "")
     setComposing(true)
@@ -947,11 +1089,18 @@ function App() {
     return (
       <Shell
         onBrand={closeSettings}
-        profile={profile}
+        accounts={accounts}
         onSettings={openSettings}
         onSignOut={signOut}
+        onAddAccount={addAccount}
       >
-        <Settings profile={profile} onClose={closeSettings} onSignOut={signOut} />
+        <Settings
+          accounts={accounts}
+          onClose={closeSettings}
+          onSignOut={signOut}
+          onAddAccount={addAccount}
+          onRemoveAccount={removeAccount}
+        />
       </Shell>
     )
   }
@@ -960,11 +1109,12 @@ function App() {
     return (
       <Shell
         onBrand={closeCompose}
-        profile={profile}
+        accounts={accounts}
         onSettings={openSettings}
         onSignOut={signOut}
+        onAddAccount={addAccount}
       >
-        <Compose onClose={closeCompose} reply={replyCtx} />
+        <Compose onClose={closeCompose} reply={replyCtx} accounts={accounts} />
       </Shell>
     )
   }
@@ -974,9 +1124,10 @@ function App() {
       <Shell
         onBrand={closeReader}
         onCompose={openCompose}
-        profile={profile}
+        accounts={accounts}
         onSettings={openSettings}
         onSignOut={signOut}
+        onAddAccount={addAccount}
       >
         <ThreadView
           thread={selected}
@@ -987,6 +1138,7 @@ function App() {
               subject: selected.subject,
               messageId: m.messageId,
               threadId: selected.threadId,
+              account: selected.account,
             })
           }
         />
@@ -998,14 +1150,17 @@ function App() {
   // flat list) can mark the right row active inside the day-grouped render.
   const flatIndex = new Map(emails.map((e, i) => [e.id, i]))
 
+  const multiAccount = accounts.length > 1
+
   return (
     <Shell
       onBrand={() => setSelected(null)}
       onCompose={openCompose}
       search={searchProps}
-      profile={profile}
+      accounts={accounts}
       onSettings={openSettings}
       onSignOut={signOut}
+      onAddAccount={addAccount}
     >
       {emails.length === 0 ? (
         <div className="empty">
@@ -1028,6 +1183,13 @@ function App() {
                   onClick={() => openEmail(email)}
                 >
                   <span className="who">
+                    {multiAccount && (
+                      <span
+                        className="acct-dot"
+                        style={{ background: acctColor(email.account) }}
+                        title={email.account}
+                      />
+                    )}
                     {email.name}
                     {email.count > 1 && <span className="count">{email.count}</span>}
                   </span>

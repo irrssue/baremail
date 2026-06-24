@@ -32,6 +32,7 @@ type sendRequest struct {
 	Body      string `json:"body"`
 	InReplyTo string `json:"inReplyTo"` // Message-ID of the message being replied to
 	ThreadID  string `json:"threadId"`  // Gmail thread to attach the reply to
+	Account   string `json:"account"`   // which linked account to send from ("" → primary)
 }
 
 // md renders Markdown → HTML. GFM gives tables, strikethrough, autolinks, and
@@ -118,7 +119,18 @@ func (s *server) handleSend(w http.ResponseWriter, r *http.Request) {
 		msg.ThreadId = tid
 	}
 
-	svc := gmailFrom(r)
+	// Send from the account that owns the message (a reply goes out from the
+	// mailbox that received it). Empty Account → the session's primary account.
+	sc := sessionFrom(r)
+	svc, _, err := sc.clientFor(r.Context(), req.Account)
+	if err != nil {
+		if errors.Is(err, errNoAccount) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Account not linked"})
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		return
+	}
 	sent, err := svc.Users.Messages.Send("me", msg).Do()
 	if err != nil {
 		// Insufficient scope (readonly-only session): tell the client to re-auth.

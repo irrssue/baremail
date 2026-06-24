@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,9 @@ type server struct {
 	staticDir string
 	clientURL string
 	oauthCfg  *oauth2.Config
+	// links resolves an "add account" OAuth round-trip back to the session the
+	// new Google account should attach to. In-memory, short-lived.
+	links *linkStore
 }
 
 func env(key, def string) string {
@@ -46,6 +50,7 @@ func main() {
 
 	srv := &server{
 		store:     store,
+		links:     newLinkStore(),
 		staticDir: env("STATIC_DIR", filepath.Join(exeDir, "..", "baremail-app", "dist")),
 		clientURL: env("CLIENT_URL", "http://localhost:5173"),
 		oauthCfg: &oauth2.Config{
@@ -78,6 +83,8 @@ func main() {
 	mux.HandleFunc("/api/emails/", srv.requireAuth(srv.handleEmailByID))
 	mux.HandleFunc("/api/send", srv.requireAuth(srv.handleSend))
 	mux.HandleFunc("/api/profile", srv.requireAuth(srv.handleProfile))
+	mux.HandleFunc("/api/accounts", srv.requireAuth(srv.handleAccounts))
+	mux.HandleFunc("/api/accounts/remove", srv.requireAuth(srv.handleUnlink))
 
 	// --- Static frontend + SPA fallback ---
 	mux.HandleFunc("/", srv.handleStatic)
@@ -114,13 +121,24 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // --- Auth handlers ---
 
 func (s *server) handleAuthGoogle(w http.ResponseWriter, r *http.Request) {
+	// "Add account" arrives as ?link=<current session token>. We mint a random
+	// OAuth state that maps to it server-side, so the real session token never
+	// travels to Google — only the opaque state does. A plain sign-in has no link
+	// param and maps state to "".
+	linkSession := r.URL.Query().Get("link")
+	if linkSession != "" && !s.store.has(linkSession) {
+		linkSession = "" // unknown session → treat as a fresh login
+	}
+	state := randomToken()
+	s.links.put(state, linkSession)
+
 	// access_type=offline yields a refresh_token so sessions outlive the ~1h
 	// access token. ApprovalForce (prompt=consent) is essential: Google only
 	// returns a refresh_token on the *first* consent for access_type=offline
 	// alone, so a re-login would otherwise overwrite the session with a
 	// refresh-token-less credential that dies ~1h later. Forcing the consent
 	// prompt guarantees every login mints a fresh refresh_token.
-	url := s.oauthCfg.AuthCodeURL("", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	url := s.oauthCfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
@@ -136,8 +154,27 @@ func (s *server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
+
+	// Identify the account so re-logins de-duplicate by email and the merged
+	// inbox can label each row + route replies. Best-effort: a userinfo failure
+	// (e.g. a consent without the userinfo scopes) just yields an unlabeled
+	// account, still usable as a single inbox.
+	acct := &account{tok: wrapToken(tok)}
+	if info, _, err := fetchUserInfo(r.Context(), s.oauthCfg.TokenSource(r.Context(), tok)); err == nil {
+		acct.Email, acct.Name, acct.Picture = info.Email, info.Name, info.Picture
+	} else {
+		log.Printf("userinfo on callback failed: %v", err)
+	}
+
+	// An add-account flow attaches to the existing session and keeps its token;
+	// a fresh sign-in mints a new session token.
+	if linkSession, ok := s.links.take(r.URL.Query().Get("state")); ok && linkSession != "" && s.store.has(linkSession) {
+		s.store.upsertAccount(linkSession, acct)
+		http.Redirect(w, r, s.clientURL+"?linked=1", http.StatusFound)
+		return
+	}
 	sessionToken := randomToken()
-	s.store.set(sessionToken, tok)
+	s.store.upsertAccount(sessionToken, acct)
 	http.Redirect(w, r, s.clientURL+"?token="+sessionToken, http.StatusFound)
 }
 
@@ -160,95 +197,201 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 type ctxKey string
 
-const (
-	gmailClientKey ctxKey = "gmail"
-	tokenSourceKey ctxKey = "tokensrc"
-)
+const sessionKey ctxKey = "session"
 
-// requireAuth validates the session token, builds a Gmail client whose token
-// source persists rotated access tokens back to the store (the Node version
-// did this via oauth2Client.on("tokens", ...)).
+// errNoAccount is returned when a request names an account email that isn't
+// linked to the session (vs. a credential that's present but dead).
+var errNoAccount = errors.New("account not linked")
+
+// sessionCtx is the per-request handle the auth middleware injects: the session
+// token plus a snapshot of its linked accounts. Handlers build a Gmail client
+// (or token source) for a specific account through it.
+type sessionCtx struct {
+	srv   *server
+	token string
+	sess  *session
+}
+
+// requireAuth validates the session token and injects a sessionCtx. Per-account
+// credential validation happens lazily when a handler builds a client, so one
+// dead account doesn't sink a request that can still serve the others.
 func (s *server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.Header.Get("x-session-token")
-		stored, ok := s.store.get(token)
+		sess, ok := s.store.getSession(token)
 		if token == "" || !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
 			return
 		}
-
-		// persistingSource wraps the standard refreshing token source and writes
-		// the merged credentials back whenever Google mints a fresh access token.
-		base := s.oauthCfg.TokenSource(r.Context(), stored)
-		ts := &persistingSource{store: s.store, sessionToken: token, prev: stored, src: base}
-
-		// Validate the credential up front. Token() returns the cached access
-		// token when still valid (cheap, no network) and only hits Google when a
-		// refresh is needed. If that refresh fails — refresh token missing,
-		// revoked, or expired — the session is a zombie: present in the store but
-		// useless. Evict it and report 401 so the client drops to the sign-in
-		// screen instead of silently rendering an empty inbox.
-		if _, err := ts.Token(); err != nil {
-			log.Printf("Session %s token refresh failed, evicting: %v", token[:min(8, len(token))], err)
-			s.store.delete(token)
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
-			return
-		}
-
-		svc, err := gmail.NewService(r.Context(), option.WithTokenSource(ts))
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to init Gmail"})
-			return
-		}
-		ctx := context.WithValue(r.Context(), gmailClientKey, svc)
-		// Expose the same persisting token source so non-Gmail handlers (e.g. the
-		// userinfo profile fetch) can authenticate without a Gmail client.
-		ctx = context.WithValue(ctx, tokenSourceKey, oauth2.TokenSource(ts))
-		next(w, r.WithContext(ctx))
+		sc := &sessionCtx{srv: s, token: token, sess: sess}
+		next(w, r.WithContext(context.WithValue(r.Context(), sessionKey, sc)))
 	}
 }
 
-func gmailFrom(r *http.Request) *gmail.Service {
-	return r.Context().Value(gmailClientKey).(*gmail.Service)
+func sessionFrom(r *http.Request) *sessionCtx {
+	return r.Context().Value(sessionKey).(*sessionCtx)
 }
 
-func tokenSourceFrom(r *http.Request) oauth2.TokenSource {
-	return r.Context().Value(tokenSourceKey).(oauth2.TokenSource)
+// tokenSource builds a refreshing, store-persisting token source for one
+// account. A refresh failure means the credential is dead (refresh token
+// missing, revoked, or expired): the account is evicted from the store — the
+// whole session when it was the last one — and the error is returned so callers
+// surface a 401, mirroring the old single-account zombie eviction.
+func (sc *sessionCtx) tokenSource(ctx context.Context, acct *account) (oauth2.TokenSource, error) {
+	base := sc.srv.oauthCfg.TokenSource(ctx, acct.tok.Token)
+	ts := &persistingSource{store: sc.srv.store, sessionToken: sc.token, email: acct.Email, prev: acct.tok.Token, src: base}
+	if _, err := ts.Token(); err != nil {
+		log.Printf("Session %s account token refresh failed, evicting: %v", sc.token[:min(8, len(sc.token))], err)
+		if len(sc.sess.accounts) <= 1 {
+			sc.srv.store.delete(sc.token)
+		} else {
+			sc.srv.store.removeAccount(sc.token, acct.Email)
+		}
+		return nil, err
+	}
+	return ts, nil
+}
+
+// clientFor builds a Gmail client for the account with the given email (empty →
+// the primary account). errNoAccount means the email isn't linked.
+func (sc *sessionCtx) clientFor(ctx context.Context, email string) (*gmail.Service, *account, error) {
+	acct := sc.sess.find(email)
+	if acct == nil {
+		return nil, nil, errNoAccount
+	}
+	ts, err := sc.tokenSource(ctx, acct)
+	if err != nil {
+		return nil, acct, err
+	}
+	svc, err := gmail.NewService(ctx, option.WithTokenSource(ts))
+	if err != nil {
+		return nil, acct, err
+	}
+	return svc, acct, nil
 }
 
 // --- Email handlers ---
 
 func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
-	svc := gmailFrom(r)
-	// List conversations (Gmail threads), not individual messages, so a
-	// back-and-forth shows as one inbox row.
-	call := svc.Users.Threads.List("me").MaxResults(20)
-	if pt := r.URL.Query().Get("pageToken"); pt != "" {
-		call = call.PageToken(pt)
+	sc := sessionFrom(r)
+	q := r.URL.Query().Get("q")
+
+	// The inbox merges every linked account. Pagination uses a composite cursor:
+	// a base64 map of account-email -> that account's Gmail pageToken. On the
+	// first page (no cursor) every account is fetched from the top; on later
+	// pages only the accounts that still had a pageToken are advanced.
+	cursor := decodeCursor(r.URL.Query().Get("pageToken"))
+	type plan struct {
+		acct      *account
+		pageToken string
 	}
-	// Optional Gmail search. Passed straight through as the Gmail `q` query
-	// (supports the full operator set: from:, subject:, is:unread, etc.).
-	if q := r.URL.Query().Get("q"); q != "" {
-		call = call.Q(q)
+	var plans []plan
+	for _, a := range sc.sess.accounts {
+		if cursor == nil {
+			plans = append(plans, plan{a, ""})
+		} else if pt, ok := cursor[a.Email]; ok && pt != "" {
+			plans = append(plans, plan{a, pt})
+		}
 	}
-	list, err := call.Do()
-	if err != nil {
-		log.Printf("Fetch threads error: %v", err)
+
+	var (
+		mu         sync.Mutex
+		all        []emailSummary
+		nextCursor = map[string]string{}
+		authFails  int
+		fetchErr   error
+		labelRows  = len(sc.sess.accounts) > 1
+		wg         sync.WaitGroup
+	)
+	for _, p := range plans {
+		wg.Add(1)
+		go func(p plan) {
+			defer wg.Done()
+			svc, acct, err := sc.clientFor(r.Context(), p.acct.Email)
+			if err != nil {
+				// A dead credential (already evicted by clientFor) — count it so
+				// an all-dead session still drops the client to the login screen.
+				mu.Lock()
+				authFails++
+				mu.Unlock()
+				return
+			}
+			summaries, next, err := fetchThreadPage(r.Context(), svc, q, p.pageToken)
+			if err != nil {
+				mu.Lock()
+				if fetchErr == nil {
+					fetchErr = err
+				}
+				mu.Unlock()
+				return
+			}
+			if labelRows {
+				for i := range summaries {
+					summaries[i].Account = acct.Email
+				}
+			}
+			mu.Lock()
+			all = append(all, summaries...)
+			if next != "" {
+				nextCursor[acct.Email] = next
+			}
+			mu.Unlock()
+		}(p)
+	}
+	wg.Wait()
+
+	// Every account's credential is dead → the session is useless; report 401 so
+	// the client re-authenticates instead of rendering a phantom empty inbox.
+	if len(plans) > 0 && authFails == len(plans) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		return
+	}
+	if fetchErr != nil && len(all) == 0 {
+		log.Printf("Fetch emails error: %v", fetchErr)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch emails"})
 		return
 	}
-	if len(list.Threads) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"emails": []emailSummary{}, "nextPageToken": nil})
-		return
+
+	// Interleave accounts newest-first. A single account keeps Gmail's native
+	// order (already newest-first) so the lone-inbox view is byte-identical.
+	if labelRows {
+		sortSummaries(all)
+	}
+	if all == nil {
+		all = []emailSummary{}
 	}
 
-	// Fetch each thread's message metadata concurrently (mirrors Promise.all).
-	// Preserve the original list order by indexing into a fixed-size slice.
+	var nextPage any
+	if len(nextCursor) > 0 {
+		nextPage = encodeCursor(nextCursor)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"emails": all, "nextPageToken": nextPage})
+}
+
+// fetchThreadPage lists one page of conversations (Gmail threads) for a single
+// account and resolves each thread's metadata concurrently into a summary row.
+func fetchThreadPage(ctx context.Context, svc *gmail.Service, q, pageToken string) ([]emailSummary, string, error) {
+	call := svc.Users.Threads.List("me").MaxResults(20)
+	if pageToken != "" {
+		call = call.PageToken(pageToken)
+	}
+	// Optional Gmail search, passed straight through as the `q` query (supports
+	// the full operator set: from:, subject:, is:unread, etc.).
+	if q != "" {
+		call = call.Q(q)
+	}
+	list, err := call.Context(ctx).Do()
+	if err != nil {
+		return nil, "", err
+	}
+	if len(list.Threads) == 0 {
+		return nil, list.NextPageToken, nil
+	}
+
 	emails := make([]emailSummary, len(list.Threads))
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var firstErr error
-
 	for i, th := range list.Threads {
 		wg.Add(1)
 		go func(i int, id string) {
@@ -256,7 +399,7 @@ func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
 			full, err := svc.Users.Threads.Get("me", id).
 				Format("metadata").
 				MetadataHeaders("From", "Subject", "Date").
-				Do()
+				Context(ctx).Do()
 			if err != nil {
 				mu.Lock()
 				if firstErr == nil {
@@ -269,18 +412,32 @@ func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
 		}(i, th.Id)
 	}
 	wg.Wait()
-
 	if firstErr != nil {
-		log.Printf("Fetch emails error: %v", firstErr)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch emails"})
-		return
+		return nil, "", firstErr
 	}
+	return emails, list.NextPageToken, nil
+}
 
-	var nextPage any
-	if list.NextPageToken != "" {
-		nextPage = list.NextPageToken
+// encodeCursor / decodeCursor serialize the per-account pagination map as an
+// opaque base64 token the frontend echoes back unchanged.
+func encodeCursor(m map[string]string) string {
+	b, _ := json.Marshal(m)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeCursor(s string) map[string]string {
+	if s == "" {
+		return nil
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"emails": emails, "nextPageToken": nextPage})
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil // garbage / a stale raw Gmail token → restart from page one
+	}
+	var m map[string]string
+	if json.Unmarshal(b, &m) != nil {
+		return nil
+	}
+	return m
 }
 
 var emailIDRe = regexp.MustCompile(`^/api/emails/([^/]+)$`)
@@ -293,17 +450,32 @@ func (s *server) handleEmailByID(w http.ResponseWriter, r *http.Request) {
 	}
 	id := m[1]
 
-	svc := gmailFrom(r)
+	sc := sessionFrom(r)
+	// ?account selects which linked mailbox the thread id lives in (the list row
+	// carried it). Empty → the primary account (single-inbox behavior).
+	email := r.URL.Query().Get("account")
+	svc, acct, err := sc.clientFor(r.Context(), email)
+	if err != nil {
+		if errors.Is(err, errNoAccount) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "Account not linked"})
+			return
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Not authenticated"})
+		return
+	}
+
 	// `id` is a thread id (the inbox list returns threads now). Fetch the whole
 	// conversation so the reader can stack every message.
-	th, err := svc.Users.Threads.Get("me", id).Format("full").Do()
+	th, err := svc.Users.Threads.Get("me", id).Format("full").Context(r.Context()).Do()
 	if err != nil {
 		log.Printf("Fetch thread error: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to fetch email"})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, buildThread(th))
+	out := buildThread(th)
+	out.Account = acct.Email
+	writeJSON(w, http.StatusOK, out)
 }
 
 // --- Static frontend (single-origin deploy) ---
@@ -361,10 +533,12 @@ func within(root, target string) bool {
 }
 
 // persistingSource refreshes via the wrapped source and persists any newly
-// minted token (merged over the previous one) back to the store.
+// minted token (merged over the previous one) back to the owning account in the
+// store. email selects that account (empty → the session's primary account).
 type persistingSource struct {
 	store        *tokenStore
 	sessionToken string
+	email        string
 	prev         *oauth2.Token
 	src          oauth2.TokenSource
 }
@@ -378,7 +552,7 @@ func (p *persistingSource) Token() (*oauth2.Token, error) {
 		// Merge so a refresh that omits the refresh_token keeps the old one,
 		// matching `{ ...old, ...fresh }` in the Node handler.
 		merged := mergeTokens(p.prev, tok)
-		p.store.set(p.sessionToken, merged)
+		p.store.setAccountToken(p.sessionToken, p.email, merged)
 		p.prev = merged
 		return merged, nil
 	}
@@ -396,12 +570,8 @@ func mergeTokens(old, fresh *oauth2.Token) *oauth2.Token {
 	return &out
 }
 
-// sortsummaries is unused by the handlers (the list order from Gmail is kept)
-// but documents that ts is the field a client would sort on; kept tiny so the
-// import stays meaningful if a future endpoint needs server-side ordering.
+// sortSummaries orders rows newest-first by timestamp. Used when more than one
+// account is merged into a single inbox so the accounts interleave by date.
 func sortSummaries(in []emailSummary) {
 	sort.Slice(in, func(i, j int) bool { return in[i].Ts > in[j].Ts })
 }
-
-var _ = sortSummaries
-var _ = errors.New

@@ -25,6 +25,11 @@ type emailSummary struct {
 	Ts      int64  `json:"ts"`
 	Unread  bool   `json:"unread"`
 	Count   int    `json:"count"`
+	// Account is the Google account (email) this thread belongs to. The list
+	// handler sets it when more than one account is linked so the frontend can
+	// tag the row and route the reader/reply to the right mailbox. Empty for a
+	// lone account (single-inbox behavior, unchanged).
+	Account string `json:"account,omitempty"`
 }
 
 // emailFull is the reader payload: serif subject, mono From/To head, prose body.
@@ -76,6 +81,9 @@ type threadFull struct {
 	References string          `json:"references"`
 	Snippet    string          `json:"snippet"`
 	Messages   []threadMessage `json:"messages"`
+	// Account is the Google account (email) this conversation belongs to, echoed
+	// back so a reply sends from the mailbox that received it.
+	Account string `json:"account,omitempty"`
 }
 
 // partHeaders safely returns a message's MIME headers, tolerating a nil payload
